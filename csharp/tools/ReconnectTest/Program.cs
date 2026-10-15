@@ -36,7 +36,220 @@ if (args.Length > 0 && args[0].Equals("manual", StringComparison.OrdinalIgnoreCa
     return await TestManualWhileAuto();
 }
 
+// Проверка ручного управления тем же кодом, что в приложении: цвета идут
+// через LocalBleDevices, а не напрямую записью в характеристику. Именно
+// этот путь однажды молча терял команды.
+if (args.Length > 0 && args[0].Equals("manual-ble", StringComparison.OrdinalIgnoreCase))
+{
+    return await TestManualBleColors();
+}
+
+// Проверка холодного старта: ручная команда подаётся, когда лента ещё не
+// подключена. Именно этот случай был сломан: команда уходила в пустоту,
+// потому что список устройств в приложении был пуст.
+if (args.Length > 0 && args[0].Equals("manual-cold", StringComparison.OrdinalIgnoreCase))
+{
+    return await TestManualColdStart();
+}
+
+// Отправка одного цвета путём приложения: нужно, чтобы проверка по
+// веб-камере работала тем же путём, что и кнопки в окне.
+//
+//   ReconnectTest deliver 255,0,0
+if (args.Length > 0 && args[0].Equals("deliver", StringComparison.OrdinalIgnoreCase))
+{
+    if (args.Length < 2) { Console.Error.WriteLine("Укажите цвет: deliver 255,0,0"); return 2; }
+    return await DeliverColor(args[1]);
+}
+
 return await TestReconnect(args);
+
+/// <summary>
+/// Отправляет один цвет через LocalBleDevices -- тот же путь, что у кнопки
+/// «Применить цвет». Возвращает 0, если цвет ушёл.
+/// </summary>
+static async Task<int> DeliverColor(string text)
+{
+    var parts = text.Split(',');
+
+    if (parts.Length != 3
+        || !int.TryParse(parts[0], out int r)
+        || !int.TryParse(parts[1], out int g)
+        || !int.TryParse(parts[2], out int b))
+    {
+        Console.Error.WriteLine($"Цвет задаётся как R,G,B -- получено «{text}»");
+        return 2;
+    }
+
+    ConfigStore.DataDirectory = Path.GetFullPath(Path.Combine(
+        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "dist"));
+
+    var config = ConfigStore.Load();
+
+    using var devices = new LocalBleDevices();
+
+    var color = new Rgb(r / 255f, g / 255f, b / 255f);
+
+    // Подключаемся, если лента ещё не подключена, и отправляем цвет.
+    devices.ApplyColorOrConnect(config, color);
+
+    // Ждём подключения: без него команда не уйдёт.
+    for (int i = 0; i < 20 && devices.ConnectedCount == 0; i++)
+        await Task.Delay(500);
+
+    // Повторяем команду после подключения и даём ленте применить цвет.
+    devices.ApplyColor(color);
+    await Task.Delay(1200);
+
+    Console.WriteLine($"  цвет {r},{g},{b} отправлен путём приложения; {devices.StatusText}");
+
+    return devices.ConnectedCount > 0 ? 0 : 1;
+}
+
+/// <summary>
+/// Холодный старт ручного управления: лента не подключена, сразу подаётся
+/// цвет. Проверяется, что команда не теряется, а доходит после подключения.
+/// </summary>
+static async Task<int> TestManualColdStart()
+{
+    Console.WriteLine("=== Проверка ручного управления без предварительного подключения ===");
+    Console.WriteLine();
+
+    ConfigStore.DataDirectory = Path.GetFullPath(Path.Combine(
+        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "dist"));
+
+    var config = ConfigStore.Load();
+
+    using var devices = new LocalBleDevices();
+
+    Console.WriteLine($"  состояние до команды: {devices.StatusText}");
+    Console.WriteLine();
+
+    // Именно так работает кнопка «Применить цвет»: если ленты в списке нет,
+    // команда всё равно должна дойти.
+    var color = new Rgb(1f, 0f, 0f);
+    var watch = Stopwatch.StartNew();
+
+    bool delivered = devices.ApplyColorOrConnect(config, color);
+    watch.Stop();
+
+    Console.WriteLine($"  ApplyColorOrConnect вернул: {delivered} " +
+                      $"({(delivered ? "ушло сразу" : "запущено подключение")})");
+    Console.WriteLine($"  вызов занял: {watch.ElapsedMilliseconds} мс");
+    Console.WriteLine("  (вызов обязан быть мгновенным: он идёт из потока интерфейса)");
+    Console.WriteLine();
+
+    if (watch.ElapsedMilliseconds > 300)
+    {
+        Console.Error.WriteLine("  ОШИБКА: вызов задержал поток интерфейса");
+        return 1;
+    }
+
+    // Ждём подключения и отправки.
+    Console.WriteLine("  ожидание подключения и отправки...");
+
+    for (int i = 1; i <= 12; i++)
+    {
+        await Task.Delay(1000);
+
+        if (devices.ConnectedCount > 0)
+        {
+            Console.WriteLine($"  [{i} с] {devices.StatusText}");
+            break;
+        }
+
+        Console.WriteLine($"  [{i} с] {devices.StatusText}");
+    }
+
+    Console.WriteLine();
+
+    if (devices.ConnectedCount == 0)
+    {
+        Console.Error.WriteLine("  ОШИБКА: лента не подключилась, команда не дошла");
+        return 1;
+    }
+
+    Console.WriteLine("РЕЗУЛЬТАТ: команда дошла после автоматического подключения");
+    return 0;
+}
+
+/// <summary>
+/// Отправляет цвета тем же путём, что и кнопки «Вручную» в приложении.
+///
+/// Проверка нужна отдельно от BleTest: тот пишет напрямую в характеристику
+/// и не проходит через рассылку приложения. Ошибка была именно в рассылке:
+/// она пропускала устройства, помеченные неподключёнными, поэтому команда из
+/// окна не доходила до ленты.
+/// </summary>
+static async Task<int> TestManualBleColors()
+{
+    Console.WriteLine("=== Проверка ручного управления лентой ===");
+    Console.WriteLine();
+
+    ConfigStore.DataDirectory = Path.GetFullPath(Path.Combine(
+        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "dist"));
+
+    var config = ConfigStore.Load();
+    var strip = config.Devices.FirstOrDefault(d => d.Enabled && d.Type == DeviceKind.ElkBledob);
+
+    if (strip == null)
+    {
+        Console.Error.WriteLine("  В настройках нет Bluetooth-ленты");
+        return 2;
+    }
+
+    Console.WriteLine($"  лента: {strip.Name} ({strip.ElkBledob?.Mac})");
+    Console.WriteLine();
+
+    using var devices = new LocalBleDevices();
+
+    var errors = await Task.Run(() => devices.Connect(config));
+    foreach (string error in errors)
+        Console.Error.WriteLine($"  ОШИБКА подключения: {error}");
+
+    Console.WriteLine($"  подключение: {devices.StatusText}");
+
+    if (devices.ConnectedCount == 0)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("  Лента не подключилась, команды проверить нельзя.");
+        return 1;
+    }
+
+    // Цвета подаются так же, как их отправляет окно: через ApplyColor.
+    var colors = new (string Name, Rgb Color)[]
+    {
+        ("красный", new Rgb(1f, 0f, 0f)),
+        ("зелёный", new Rgb(0f, 1f, 0f)),
+        ("синий", new Rgb(0f, 0f, 1f)),
+        ("белый", new Rgb(1f, 1f, 1f)),
+    };
+
+    Console.WriteLine();
+    Console.WriteLine("  Отправка цветов путём приложения:");
+
+    foreach (var (name, color) in colors)
+    {
+        devices.ApplyColor(color);
+        Console.WriteLine($"    {name,-10} -- отправлен");
+        await Task.Delay(1200);
+    }
+
+    Console.WriteLine("    выключение -- отправлено");
+    devices.TurnOff();
+    await Task.Delay(1200);
+
+    Console.WriteLine("    включение  -- отправлено");
+    devices.TurnOn();
+    await Task.Delay(1200);
+
+    Console.WriteLine();
+    Console.WriteLine($"  состояние: {devices.StatusText}");
+    Console.WriteLine();
+    Console.WriteLine("РЕЗУЛЬТАТ: команды отправлены путём приложения.");
+
+    return 0;
+}
 
 /// <summary>
 /// Воспроизводит ситуацию «включено автоматическое управление, и

@@ -47,18 +47,35 @@ TESTS = [
 ]
 
 
-def find_ble_test(repo_root):
-    """Ищет утилиту BleTest, которой отправляются команды ленте."""
-    candidates = [
-        repo_root / 'csharp' / 'tools' / 'BleTest' / 'bin' / 'Release'
-        / 'net10.0-windows10.0.19041.0' / 'OpenTuyaSync.BleTest.exe',
-    ]
+def find_tool(repo_root, name, frameworks):
+    """Ищет собранную утилиту в папке tools."""
+    base = repo_root / 'csharp' / 'tools' / name / 'bin' / 'Release'
 
-    for path in candidates:
+    for framework in frameworks:
+        path = base / framework / f'OpenTuyaSync.{name}.exe'
         if path.exists():
             return path
 
     return None
+
+
+def find_ble_test(repo_root):
+    """Ищет утилиту BleTest, которой команды пишутся прямо в характеристику."""
+    return find_tool(repo_root, 'BleTest',
+                     ('net10.0-windows10.0.19041.0', 'net10.0-windows'))
+
+
+def find_app_sender(repo_root):
+    """
+    Ищет утилиту, отправляющую цвет путём приложения.
+
+    Разница существенная: BleTest пишет в характеристику напрямую, а здесь
+    команда проходит через ту же рассылку, что и кнопка «Применить цвет» в
+    окне. Ошибка с потерей ручных команд была именно в рассылке, поэтому
+    проверять по камере нужно оба пути.
+    """
+    return find_tool(repo_root, 'ReconnectTest',
+                     ('net10.0-windows10.0.19041.0', 'net10.0-windows'))
 
 
 def send_color(ble_test, mac, color):
@@ -67,6 +84,16 @@ def send_color(ble_test, mac, color):
     result = subprocess.run(
         [str(ble_test), 'color', mac, str(r), str(g), str(b)],
         capture_output=True, text=True, timeout=120,
+    )
+    return result.returncode == 0, (result.stdout or '') + (result.stderr or '')
+
+
+def send_color_via_app(app_sender, color):
+    """Отправляет цвет путём приложения: через ту же рассылку, что в окне."""
+    r, g, b = color
+    result = subprocess.run(
+        [str(app_sender), 'deliver', f'{r},{g},{b}'],
+        capture_output=True, text=True, timeout=180,
     )
     return result.returncode == 0, (result.stdout or '') + (result.stderr or '')
 
@@ -140,6 +167,127 @@ def measure_noise(cap, reference):
     return max(abs(v) for v in per_channel), share
 
 
+def compare_pair(cap, ble_test, mac, first_color, second_color, settle):
+    """
+    Парное сравнение двух цветов: два снимка подряд с разными командами.
+
+    Камера подстраивает экспозицию под кадр, поэтому сравнивать снимки,
+    сделанные далеко друг от друга, ненадёжно. Здесь между снимками
+    меняется только цвет лампы, и разницу видно однозначно.
+    """
+    print()
+    print(f'Сравнение двух цветов: {first_color} и {second_color}')
+    print()
+
+    sent_first, output_first = send_color(ble_test, mac, first_color)
+    if not sent_first:
+        print('  первый цвет не отправлен:')
+        print('   ', output_first.strip().splitlines()[-1] if output_first.strip() else 'нет ответа')
+        return 1
+
+    time.sleep(settle)
+    first = average_frame(cap)
+    if first is None:
+        print('  ОШИБКА: кадр не получен')
+        return 1
+
+    print(f'  кадр 1 снят (цвет {first_color})')
+
+    sent_second, output_second = send_color(ble_test, mac, second_color)
+    if not sent_second:
+        print('  второй цвет не отправлен:')
+        print('   ', output_second.strip().splitlines()[-1] if output_second.strip() else 'нет ответа')
+        return 1
+
+    time.sleep(settle)
+    second = average_frame(cap)
+    if second is None:
+        print('  ОШИБКА: кадр не получен')
+        return 1
+
+    print(f'  кадр 2 снят (цвет {second_color})')
+
+    per_channel, share = signature_diff(first, second)
+
+    print()
+    print(f'  разница по каналам: R {per_channel[0]:+.2f}, '
+          f'G {per_channel[1]:+.2f}, B {per_channel[2]:+.2f}')
+    print(f'  изменившихся пикселей: {share * 100:.2f}%')
+
+    # Ожидаемое направление: переход к красному поднимает красный канал и
+    # опускает остальные; переход к синему -- наоборот.
+    dominant = max(range(3), key=lambda i: abs(per_channel[i]))
+    names = ('красный', 'зелёный', 'синий')
+    direction = 'вырос' if per_channel[dominant] > 0 else 'упал'
+
+    print(f'  сильнее всех изменился {names[dominant]} канал: {direction}')
+
+    changed = share > 0.002 or max(abs(v) for v in per_channel) > 1.5
+
+    print()
+    print('РЕЗУЛЬТАТ: ' + ('лампа изменила цвет' if changed else
+                          'изменений не замечено -- команда не дошла до лампы'))
+
+    return 0 if changed else 1
+
+
+def compare_by_hand(cap, settle):
+    """
+    Парное сравнение: два снимка подряд, между ними команда подаётся вручную.
+
+    Нужно, чтобы проверить именно приложение, а не утилиту отправки:
+    пользователь нажимает кнопку в окне, а скрипт измеряет, изменилась ли
+    лампа. Так проверяется весь путь от кнопки до устройства.
+
+    Камера подстраивает экспозицию под кадр, поэтому сравнивать снимки,
+    сделанные далеко друг от друга, ненадёжно. Здесь снимки идут подряд,
+    и между ними меняется только состояние лампы.
+    """
+    print()
+    print('Парное сравнение. Камера смотрит на лампу.')
+    print()
+    print('  1. Убедитесь, что лента светит одним цветом.')
+    print('  2. Скрипт снимет первый кадр.')
+    print('  3. Вы измените цвет.')
+    print('  4. Скрипт снимет второй кадр и покажет разницу.')
+    print()
+
+    input('  Нажмите Enter, чтобы снять первый кадр... ')
+    first = average_frame(cap)
+    if first is None:
+        print('  ОШИБКА: кадр не получен')
+        return 1
+
+    print('  Кадр снят.')
+    print()
+    input('  Измените цвет и нажмите Enter, чтобы снять второй кадр... ')
+
+    # Даём лампе и камере время на реакцию.
+    time.sleep(settle)
+
+    second = average_frame(cap)
+    if second is None:
+        print('  ОШИБКА: кадр не получен')
+        return 1
+
+    per_channel, share = signature_diff(first, second)
+
+    print()
+    print(f'  разница по каналам: R {per_channel[0]:+.2f}, '
+          f'G {per_channel[1]:+.2f}, B {per_channel[2]:+.2f}')
+    print(f'  изменившихся пикселей: {share * 100:.2f}%')
+
+    # Порог тот же, что и в автоматической проверке: он заметно выше шума
+    # камеры, измеренного ключом --no-send (обычно доли процента).
+    changed = share > 0.002 or max(abs(v) for v in per_channel) > 1.5
+
+    print()
+    print('РЕЗУЛЬТАТ: ' + ('лампа изменилась' if changed else
+                          'изменений не замечено -- команда не дошла до лампы'))
+
+    return 0 if changed else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description='Проверка подсветки по веб-камере')
     parser.add_argument('--mac', help='MAC-адрес Bluetooth-ленты')
@@ -149,23 +297,50 @@ def main():
     parser.add_argument('--image', help='сохранить последний кадр в файл')
     parser.add_argument('--no-send', action='store_true',
                         help='не отправлять команды, только измерить шум')
+    parser.add_argument('--compare', action='store_true',
+                        help='парное сравнение: команду подаёте вы вручную, '
+                             'скрипт только измеряет')
+    parser.add_argument('--pair', nargs=2, metavar=('ЦВЕТ1', 'ЦВЕТ2'),
+                        help='сравнить два цвета, например: '
+                             '--pair 255,0,0 0,0,255')
+    parser.add_argument('--via-app', action='store_true',
+                        help='отправлять цвета путём приложения (через ту же '
+                             'рассылку, что и кнопка «Применить цвет»)')
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[2]
+    # camera_check.py лежит в csharp/tools/CameraCheck, поэтому корень
+    # проекта -- на три уровня выше.
+    repo_root = Path(__file__).resolve().parents[3]
 
     ble_test = None
-    if not args.no_send:
-        if not args.mac:
-            sys.exit('Укажите MAC-ленты: --mac BE:60:41:00:27:B9')
+    app_sender = None
+    send = None
 
-        ble_test = find_ble_test(repo_root)
-        if ble_test is None:
-            sys.exit('Не найдена утилита BleTest. Соберите её: build-tools.bat')
+    if not args.no_send and not args.compare:
+        if args.via_app:
+            # Путь приложения: MAC не нужен, лента берётся из настроек.
+            app_sender = find_app_sender(repo_root)
+            if app_sender is None:
+                sys.exit('Не найдена утилита ReconnectTest. Соберите её: build-tools.bat')
+
+            send = lambda color: send_color_via_app(app_sender, color)
+        else:
+            # Прямая запись в характеристику: проверяет саму ленту.
+            if not args.mac:
+                sys.exit('Укажите MAC-ленты: --mac BE:60:41:00:27:B9')
+
+            ble_test = find_ble_test(repo_root)
+            if ble_test is None:
+                sys.exit('Не найдена утилита BleTest. Соберите её: build-tools.bat')
+
+            send = lambda color: send_color(ble_test, args.mac, color)
 
     print('=== Проверка подсветки по веб-камере ===')
     print(f'  камера: {args.camera}')
     if ble_test:
-        print(f'  утилита отправки: {ble_test.name}')
+        print(f'  отправка: {ble_test.name} (прямая запись)')
+    if app_sender:
+        print(f'  отправка: {app_sender.name} (путь приложения)')
     print()
 
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
@@ -196,6 +371,20 @@ def main():
                   'изменения меньше него различить нельзя.')
             return 0
 
+        if args.compare:
+            return compare_by_hand(cap, args.settle)
+
+        if args.pair:
+            def parse(text):
+                parts = text.split(',')
+                if len(parts) != 3:
+                    sys.exit(f'Цвет задаётся как R,G,B -- получено «{text}»')
+                return tuple(int(p) for p in parts)
+
+            return compare_pair(cap, ble_test, args.mac,
+                                parse(args.pair[0]), parse(args.pair[1]),
+                                args.settle)
+
         print()
         print('  цвет      | отправка | разница R  G  B      | изменилось | вывод')
         print('  ----------+----------+---------------------+------------+-------')
@@ -206,7 +395,7 @@ def main():
         for name, color in TESTS:
             total += 1
 
-            sent, output = send_color(ble_test, args.mac, color)
+            sent, output = send(color)
             if not sent:
                 short = output.strip().splitlines()[-1] if output.strip() else 'нет ответа'
                 print(f'  {name:<9} | отказ    | {"":<19} | {"":<10} | {short[:40]}')
@@ -255,7 +444,7 @@ def main():
             print('     «отказ в доступе» на службу ленты;')
             print('   - вывод команды отправки ниже.')
             print()
-            _, output = send_color(ble_test, args.mac, (255, 0, 0))
+            _, output = send((255, 0, 0))
             print('  ---- вывод отправки ----')
             print(output.strip())
 

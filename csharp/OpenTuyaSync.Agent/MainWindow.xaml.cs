@@ -596,8 +596,14 @@ public partial class MainWindow : Window
         StopAutoForManualAction();
 
         _service.SendColor(_manualColor);
-        _localBle.ApplyColor(_manualColor);
-        AppendLog($"Отправлен цвет: {_manualColor}");
+
+        // Если лента ещё не подключена, команда не теряется: подключение
+        // запустится в фоне и цвет уйдёт сразу после него.
+        bool delivered = _localBle.ApplyColorOrConnect(_config, _manualColor);
+
+        AppendLog(delivered
+            ? $"Отправлен цвет: {_manualColor}"
+            : $"Отправлен цвет: {_manualColor} (лента подключается, цвет уйдёт после подключения)");
     }
 
     private void OnManualPowerOn(object sender, RoutedEventArgs e)
@@ -605,8 +611,9 @@ public partial class MainWindow : Window
         StopAutoForManualAction();
 
         _service.SendCommand(new IpcMessage { Type = MessageType.SetDevicePower, On = true }, 3000);
-        _localBle.TurnOn();
-        AppendLog("Лента включена.");
+
+        bool delivered = _localBle.TurnOnOrConnect(_config);
+        AppendLog(delivered ? "Лента включена." : "Лента включается...");
     }
 
     private void OnManualPowerOff(object sender, RoutedEventArgs e)
@@ -614,8 +621,9 @@ public partial class MainWindow : Window
         StopAutoForManualAction();
 
         _service.SendCommand(new IpcMessage { Type = MessageType.SetDevicePower, On = false }, 3000);
-        _localBle.TurnOff();
-        AppendLog("Лента выключена.");
+
+        bool delivered = _localBle.TurnOffOrConnect(_config);
+        AppendLog(delivered ? "Лента выключена." : "Лента выключается...");
     }
 
     private void OnPickColor(object sender, RoutedEventArgs e)

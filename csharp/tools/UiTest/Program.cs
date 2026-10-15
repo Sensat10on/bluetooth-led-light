@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using OpenTuyaSync.Agent;
 using OpenTuyaSync.Core;
+using OpenTuyaSync.Core.Ipc;
 
 // Проверка интерфейса: создаёт главное окно и убеждается, что разметка
 // разбирается без ошибок.
@@ -80,6 +81,45 @@ internal static class Program
             if (names.Count != 3)
             {
                 Console.Error.WriteLine($"  ОШИБКА: ожидалось 3 вкладки, найдено {names.Count}");
+                return 1;
+            }
+
+            // Найденные устройства показываются в списке как есть, поэтому
+            // у них должна быть читаемая подпись. Без неё список выводил имя
+            // класса, и вместо названия с адресом было
+            // «OpenTuyaSync.Core.Ipc.DiscoveredDevice».
+            var discovered = new DiscoveredDevice
+            {
+                Id = "BE60410027B9",
+                Address = "BE:60:41:00:27:B9",
+                Name = "ELK-BLEDOB",
+                IsBluetooth = true,
+            };
+
+            Console.WriteLine($"  найденное устройство: {discovered}");
+
+            if (!discovered.ToString().Contains("ELK-BLEDOB")
+                || !discovered.ToString().Contains("BE:60:41:00:27:B9"))
+            {
+                Console.Error.WriteLine(
+                    "  ОШИБКА: подпись найденного устройства не содержит имени и адреса");
+                return 1;
+            }
+
+            // У туманных устройств подписи другая: адрес, идентификатор и версия.
+            var tuya = new DiscoveredDevice
+            {
+                Id = "bf1234567890",
+                Address = "192.168.1.50",
+                Version = 3.5,
+                IsBluetooth = false,
+            };
+
+            Console.WriteLine($"  найденное устройство (Tuya): {tuya}");
+
+            if (!tuya.ToString().Contains("192.168.1.50"))
+            {
+                Console.Error.WriteLine("  ОШИБКА: подпись устройства Tuya без адреса");
                 return 1;
             }
 

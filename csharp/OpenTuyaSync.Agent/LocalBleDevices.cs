@@ -208,6 +208,56 @@ public sealed class LocalBleDevices : IDisposable
         }
     }
 
+    /// <summary>
+    /// Отправляет цвет и, если ленты в списке нет, сперва подключает её.
+    ///
+    /// Нужно для ручного управления. Подключение запускается в фоне и
+    /// занимает секунды, поэтому команда ставится в очередь сразу, а
+    /// вызывающий код не ждёт. Без этого нажатие «Применить цвет» в окне,
+    /// которое открыли сразу после остановки подсветки, уходило в пустоту:
+    /// список устройств в этот момент ещё пуст.
+    ///
+    /// Возвращает true, если лента подключена и цвет поставлен в очередь
+    /// сразу; false -- если подключение только начато.
+    /// </summary>
+    public bool ApplyColorOrConnect(AppConfig config, Rgb color)
+    {
+        bool connected;
+
+        lock (_sync)
+        {
+            connected = _providers.Count > 0;
+
+            foreach (var provider in _providers.Values)
+            {
+                try { provider.SetColor(color); }
+                catch (Exception) { }
+            }
+        }
+
+        if (connected) return true;
+
+        // Ленты нет -- подключаем в фоне и повторяем команду, когда связь
+        // появится. Признак _connecting защищает от потока одинаковых
+        // попыток: ручной цвет отправляется многократно.
+        if (!_connecting) Task.Run(() => ConnectAndSend(config, color));
+
+        return false;
+    }
+
+    private void ConnectAndSend(AppConfig config, Rgb color)
+    {
+        try
+        {
+            Connect(config);
+            ApplyColor(color);
+        }
+        catch (Exception)
+        {
+            // Ошибку подключения уже записал Connect через список ошибок.
+        }
+    }
+
     public void TurnOn()
     {
         lock (_sync)
@@ -216,6 +266,75 @@ public sealed class LocalBleDevices : IDisposable
             {
                 try { provider.TurnOn(); } catch (Exception) { }
             }
+        }
+    }
+
+    /// <summary>
+    /// Включает ленту, подключая её при необходимости. Устроено так же, как
+    /// ApplyColorOrConnect: кнопка «Включить» должна работать и тогда, когда
+    /// лента ещё не в списке.
+    /// </summary>
+    public bool TurnOnOrConnect(AppConfig config)
+    {
+        bool connected;
+
+        lock (_sync)
+        {
+            connected = _providers.Count > 0;
+            foreach (var provider in _providers.Values)
+            {
+                try { provider.TurnOn(); } catch (Exception) { }
+            }
+        }
+
+        if (connected) return true;
+
+        if (!_connecting) Task.Run(() => ConnectAndPower(config, on: true));
+        return false;
+    }
+
+    /// <summary>Выключает ленту и подключает её при необходимости.</summary>
+    public bool TurnOffOrConnect(AppConfig config)
+    {
+        bool connected;
+
+        lock (_sync)
+        {
+            connected = _providers.Count > 0;
+            foreach (var provider in _providers.Values)
+            {
+                try { provider.TurnOff(); } catch (Exception) { }
+            }
+        }
+
+        if (connected) return true;
+
+        if (!_connecting) Task.Run(() => ConnectAndPower(config, on: false));
+        return false;
+    }
+
+    private void ConnectAndPower(AppConfig config, bool on)
+    {
+        try
+        {
+            Connect(config);
+
+            lock (_sync)
+            {
+                foreach (var provider in _providers.Values)
+                {
+                    try
+                    {
+                        if (on) provider.TurnOn();
+                        else provider.TurnOff();
+                    }
+                    catch (Exception) { }
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Ошибку подключения уже записал Connect.
         }
     }
 
