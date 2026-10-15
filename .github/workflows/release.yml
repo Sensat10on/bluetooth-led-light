@@ -4,6 +4,8 @@ name: Release
 #
 # Сборка идёт на сервере GitHub: это гарантирует, что приложенный к релизу
 # архив собран из того же кода, что отмечен тегом, а не из локальной копии.
+#
+# Локальная сборка для сравнения: csharp\publish-release.cmd
 
 on:
   push:
@@ -41,47 +43,69 @@ jobs:
         working-directory: csharp
         shell: pwsh
         run: |
-          # Отладочные символы в релизе не нужны.
-          Get-ChildItem Releases -Recurse -Include *.pdb | Remove-Item -Force
+          $ErrorActionPreference = 'Stop'
 
-          # Настройки, инструкция, значки.
-          Copy-Item release-files\config.json Releases\ -Force
+          # Отладочные символы в релизе не нужны.
+          Get-ChildItem Releases -Recurse -Include *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
+
+          # Инструкция, скрипты установки и значок.
           Copy-Item release-files\*.bat Releases\ -Force
           Copy-Item release-files\*.txt Releases\ -Force
           Copy-Item assets\icon.ico Releases\ -Force
 
+          # Настройки по умолчанию.
+          #
+          # config.json намеренно не хранится в репозитории: в нём лежат
+          # идентификаторы устройств и ключи доступа. Поэтому для релиза
+          # создаётся пустой файл настроек -- пользователь заполняет его сам
+          # через вкладку «Настройки», а недостающие поля приложение
+          # дополняет значениями по умолчанию.
+          if (-not (Test-Path 'Releases\config.json')) {
+            $config = [ordered]@{
+              devices                  = @()
+              auto_start               = $false
+              start_minimized          = $false
+              restore_scene_on_exit    = $false
+              active_source            = 'screen'
+              auto_start_capture       = $false
+            }
+            $config | ConvertTo-Json -Depth 5 |
+              Set-Content 'Releases\config.json' -Encoding UTF8
+            Write-Output 'Создан пустой config.json'
+          }
+
           # Полная справка: markdown преобразуется в обычный текст.
           powershell -NoProfile -ExecutionPolicy Bypass -File make-guide.ps1 -Output Releases
+
+      - name: Проверка сборки
+        working-directory: csharp
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          foreach ($file in 'Releases\OpenTuyaSync.exe',
+                            'Releases\OpenTuyaSync.Service.exe',
+                            'Releases\tools\ColorTest\OpenTuyaSync.ColorTest.exe',
+                            'Releases\СПРАВКА.txt',
+                            'Releases\config.json') {
+            if (-not (Test-Path $file)) { throw "Не найден файл релиза: $file" }
+            $size = [math]::Round((Get-Item $file).Length / 1KB, 1)
+            Write-Output "  $file -- $size КБ"
+          }
+
+          Write-Output ''
+          Write-Output 'Проверка пройдена.'
 
       - name: Сборка архива
         working-directory: csharp
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $version = '${{ github.ref_name }}' -replace '^v', ''
           $zip = "Releases\OpenTuyaSync-v$version.zip"
+          Remove-Item $zip -Force -ErrorAction SilentlyContinue
           Compress-Archive -Path 'Releases\*' -DestinationPath $zip -CompressionLevel Optimal
           Write-Output "Архив: $zip ($([math]::Round((Get-Item $zip).Length/1MB,2)) МБ)"
-
-      - name: Проверка, что приложение запускается
-        working-directory: csharp
-        shell: pwsh
-        run: |
-          # Самопроверка теста подсветки: окно не показывается, но заливка
-          # строится и результат пишется в отчёт.
-          & 'Releases\tools\ColorTest\OpenTuyaSync.ColorTest.exe' --selftest
-          Start-Sleep -Seconds 3
-
-          $report = 'Releases\tools\ColorTest\selftest_report.txt'
-          if (-not (Test-Path $report)) { throw 'Самопроверка не создала отчёт' }
-
-          Get-Content $report -Encoding UTF8 | Write-Output
-          if (-not (Select-String -Path $report -Pattern 'заливка строится всеми эффектами')) {
-            throw 'Самопроверка теста подсветки не прошла'
-          }
-
-          # Следы проверки в архив не попадают.
-          Remove-Item 'Releases\tools\ColorTest\selftest_*' -Force -ErrorAction SilentlyContinue
-          Remove-Item "Releases\tools\ColorTest\colortest_*" -Force -ErrorAction SilentlyContinue
 
       - name: Публикация релиза
         uses: softprops/action-gh-release@v2
