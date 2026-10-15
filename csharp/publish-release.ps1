@@ -84,62 +84,117 @@ if (Test-Path $release) { Remove-Item $release -Recurse -Force }
 New-Item -ItemType Directory -Path $release -Force | Out-Null
 
 # ---------------------------------------------------- задания сборки
-# Каждое задание -- отдельный вывод: так сборка идёт параллельно, а файлы
-# не мешают друг другу. Приложение и служба кладутся в одну папку, поэтому
-# их вывод должен совпадать -- он и совпадает.
-$jobs = @(
-    @{ Name = 'приложение';   Project = 'OpenTuyaSync.Agent\OpenTuyaSync.Agent.csproj';   Output = $release }
-    @{ Name = 'служба';       Project = 'OpenTuyaSync.Service\OpenTuyaSync.Service.csproj'; Output = $release }
-    @{ Name = 'тест подсветки'; Project = 'tools\ColorTest\ColorTest.csproj';             Output = Join-Path $release 'tools\ColorTest' }
-    @{ Name = 'CaptureTest';  Project = 'tools\CaptureTest\CaptureTest.csproj';           Output = Join-Path $release 'tools\CaptureTest' }
-    @{ Name = 'PipeTest';     Project = 'tools\PipeTest\PipeTest.csproj';                 Output = Join-Path $release 'tools\PipeTest' }
-    @{ Name = 'MusicTest';    Project = 'tools\MusicTest\MusicTest.csproj';               Output = Join-Path $release 'tools\MusicTest' }
-    @{ Name = 'ConfigTest';   Project = 'tools\ConfigTest\ConfigTest.csproj';             Output = Join-Path $release 'tools\ConfigTest' }
+# Проекты делят промежуточные файлы: утилиты зависят от тех же библиотек,
+# что и приложение, и компилятор пишет их в общий каталог obj. Если собирать
+# такие проекты одновременно, они мешают друг другу: сборка падает с
+# «Cannot open ... because it is being used by another process».
+#
+# Поэтому в два этапа:
+#   1. приложение -- оно собирает все общие библиотеки (Core, Capture,
+#      Providers, Ipc);
+#   2. остальные проекты параллельно с ключом --no-dependencies: их
+#      зависимости уже готовы после первого этапа, и объекты никто не делит.
+$dependentJobs = @(
+    @{ Name = 'служба';         Project = 'OpenTuyaSync.Service\OpenTuyaSync.Service.csproj'; Output = $release }
+    @{ Name = 'тест подсветки'; Project = 'tools\ColorTest\ColorTest.csproj';                Output = Join-Path $release 'tools\ColorTest' }
+    @{ Name = 'CaptureTest';    Project = 'tools\CaptureTest\CaptureTest.csproj';            Output = Join-Path $release 'tools\CaptureTest' }
+    @{ Name = 'PipeTest';       Project = 'tools\PipeTest\PipeTest.csproj';                  Output = Join-Path $release 'tools\PipeTest' }
+    @{ Name = 'MusicTest';      Project = 'tools\MusicTest\MusicTest.csproj';                Output = Join-Path $release 'tools\MusicTest' }
+    @{ Name = 'ConfigTest';     Project = 'tools\ConfigTest\ConfigTest.csproj';              Output = Join-Path $release 'tools\ConfigTest' }
 )
 
-Write-Step "Параллельная сборка ($($jobs.Count) проектов, одновременно $MaxParallel)"
+Write-Step "Сборка ($(1 + $dependentJobs.Count) проектов: приложение, затем $($dependentJobs.Count) параллельно)"
 
 $started = Get-Date
 
 # Папки вывода создаём заранее: dotnet publish этого не делает для вложенных
 # путей и падает.
-foreach ($job in $jobs) {
+New-Item -ItemType Directory -Path $release -Force | Out-Null
+foreach ($job in $dependentJobs) {
     New-Item -ItemType Directory -Path $job.Output -Force | Out-Null
 }
 
-$running = @()
 $failed = @()
 
-foreach ($job in $jobs) {
+# Задание PowerShell, а не Start-Process: у процесса, запущенного без
+# ожидания, код возврата остаётся недоступным, и проверить результат сборки
+# было бы нельзя. Задание отдаёт и код, и текст ошибки.
+function Start-BuildJob {
+    param(
+        [string]$Name,
+        [string]$Project,
+        [string]$Output,
+        [switch]$NoDependencies
+    )
+
+    $job = Start-Job -ScriptBlock {
+        param($WorkingDirectory, $Project, $Output, $NoDependencies)
+
+        Set-Location $WorkingDirectory
+
+        $arguments = @('publish', $Project, '-c', 'Release', '-o', $Output, '--nologo', '-v', 'q')
+
+        if ($NoDependencies) { $arguments += '--no-dependencies' }
+
+        # Вывод объединяем: сообщения об ошибках dotnet пишет в оба потока.
+        $result = & dotnet @arguments 2>&1
+
+        [PSCustomObject]@{
+            Code   = $LASTEXITCODE
+            Output = ($result | Out-String).Trim()
+        }
+    } -ArgumentList $root, $Project, $Output, $NoDependencies.IsPresent
+
+    Write-Host "  запущено: $Name"
+
+    return [PSCustomObject]@{ Name = $Name; Job = $job }
+}
+
+# --- Этап 1: приложение. Собирает общие библиотеки для всех остальных.
+Write-Host ''
+Write-Host '  этап 1: приложение (общие библиотеки)'
+
+$appJob = Start-BuildJob -Name 'приложение' `
+    -Project 'OpenTuyaSync.Agent\OpenTuyaSync.Agent.csproj' `
+    -Output $release
+
+$appJob.Job | Wait-Job | Out-Null
+$appResult = Receive-Job -Job $appJob.Job
+Remove-Job -Job $appJob.Job -Force
+
+$appCode = if ($appResult -is [array]) { $appResult[0].Code } else { $appResult.Code }
+$appText = if ($appResult -is [array]) { $appResult[0].Output } else { $appResult.Output }
+
+if ($appCode -ne 0) {
+    $failed += 'приложение'
+    Write-Host "  ОШИБКА: приложение (код $appCode)" -ForegroundColor Red
+
+    if ($appText) {
+        foreach ($line in ($appText -split "`r?`n" | Select-Object -First 8)) {
+            Write-Host "      $line" -ForegroundColor DarkYellow
+        }
+    }
+
+    throw 'Сборка приложения не удалась, остальные проекты собирать нечем'
+}
+
+Write-Host '  готово:  приложение' -ForegroundColor Green
+
+# --- Этап 2: остальные проекты параллельно.
+Write-Host ''
+Write-Host "  этап 2: остальные проекты, одновременно $MaxParallel"
+
+$running = @()
+
+foreach ($job in $dependentJobs) {
     # Держим не больше MaxParallel одновременных сборок: больше не ускоряет,
     # но загружает процессор и диск.
     while (@($running | Where-Object { $_.Job.State -eq 'Running' }).Count -ge $MaxParallel) {
         Start-Sleep -Milliseconds 300
     }
 
-    # Задание PowerShell, а не Start-Process: у процесса, запущенного без
-    # ожидания, код возврата остаётся недоступным, и проверить результат
-    # сборки было бы нельзя. Задание отдаёт и код, и текст ошибки.
-    $name = $job.Name
-    $project = $job.Project
-    $output = $job.Output
-
-    $powerShellJob = Start-Job -ScriptBlock {
-        param($WorkingDirectory, $Project, $Output)
-
-        Set-Location $WorkingDirectory
-
-        # Вывод объединяем: сообщения об ошибках dotnet пишет в оба потока.
-        $result = & dotnet publish $Project -c Release -o $Output --nologo -v q 2>&1
-
-        [PSCustomObject]@{
-            Code   = $LASTEXITCODE
-            Output = ($result | Out-String).Trim()
-        }
-    } -ArgumentList $root, $project, $output
-
-    $running += [PSCustomObject]@{ Name = $name; Job = $powerShellJob }
-    Write-Host "  запущено: $name"
+    $running += Start-BuildJob -Name $job.Name -Project $job.Project `
+        -Output $job.Output -NoDependencies
 }
 
 # Ждём завершения всех сборок.
