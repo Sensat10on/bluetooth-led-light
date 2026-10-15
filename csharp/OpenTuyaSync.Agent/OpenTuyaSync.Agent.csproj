@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <!-- Значок в трее берётся из Windows Forms: в WPF своего нет. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>OpenTuyaSync</AssemblyName>
+    <RootNamespace>OpenTuyaSync.Agent</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Иконка встраивается в исполняемый файл: без этой строки значок
+         окна и файла берётся системный, хотя файл иконки лежал рядом.
+         ApplicationIcon встраивает её как ресурс Windows, Icon в разметке
+         окна показывает в заголовке. -->
+    <ApplicationIcon>..\assets\icon.ico</ApplicationIcon>
+
+    <!-- InvariantGlobalization намеренно НЕ включается: WPF разрешает
+         культуру для привязок, и в инвариантном режиме падает с
+         «Cannot find non-neutral culture related to 'en-us'» при показе
+         окна. Экономия от инвариантного режима здесь ничтожна. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Иконка окна: тот же файл, что встроен в исполняемый файл. -->
+    <Resource Include="..\assets\icon.ico" Link="icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenTuyaSync.Core\OpenTuyaSync.Core.csproj" />
+    <ProjectReference Include="..\OpenTuyaSync.Capture\OpenTuyaSync.Capture.csproj" />
+    <!-- Нужен только ради названий типов устройств в интерфейсе: сама
+         работа с устройствами идёт в службе. -->
+    <ProjectReference Include="..\OpenTuyaSync.Providers\OpenTuyaSync.Providers.csproj" />
+  </ItemGroup>
+
+</Project>

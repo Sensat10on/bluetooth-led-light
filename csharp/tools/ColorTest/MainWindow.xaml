@@ -1,0 +1,124 @@
+<Window x:Class="OpenTuyaSync.ColorTest.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Тест Ambilight — плавная смена цветов"
+        Icon="icon.ico"
+        Height="720" Width="1080"
+        WindowStartupLocation="CenterScreen"
+        Background="Black"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <Grid x:Name="RootGrid">
+
+        <!-- Заливка на весь экран: по ней проверяется подсветка.
+             Обычный Rectangle, а не DrawingVisual: у прямоугольника с
+             кистью отрисовка гарантированно попадает в кадр окна. -->
+        <Rectangle x:Name="ScreenRect" HorizontalAlignment="Stretch"
+                   VerticalAlignment="Stretch" />
+
+        <!-- Панель управления. Показывается при наведении мыши. -->
+        <Border x:Name="ControlPanel"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                Margin="16"
+                Background="#E6141024"
+                BorderBrush="#5533FFD0" BorderThickness="1"
+                CornerRadius="10" Padding="16"
+                MaxWidth="820">
+            <StackPanel>
+
+                <TextBlock Text="Тест Ambilight"
+                           Foreground="#FF3EE8" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock x:Name="HintText"
+                           Foreground="#AAAAAA" Margin="0,2,0,10"
+                           Text="F11 или двойной щелчок — полный экран. Esc — выход. Панель скрывается, когда мышь не двигается." />
+
+                <!-- ==== Цвета ==== -->
+                <TextBlock Text="Цвета (2–10)" Foreground="#CCCCCC" FontWeight="SemiBold" Margin="0,4,0,4" />
+                <ItemsControl x:Name="ColorList">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <Button x:Name="AddColorButton" Content="+ Добавить цвет" Click="OnAddColor" MinWidth="140" />
+                    <Button x:Name="RemoveColorButton" Content="− Убрать цвет" Click="OnRemoveColor" MinWidth="130" />
+                    <TextBlock x:Name="ColorCountText" Foreground="#AAAAAA" VerticalAlignment="Center" Margin="10,0,0,0" />
+                </StackPanel>
+
+                <!-- ==== Эффект ==== -->
+                <TextBlock Text="Эффект" Foreground="#CCCCCC" FontWeight="SemiBold" Margin="0,14,0,4" />
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="EffectSweep" Content="Переливание" IsChecked="True"
+                                 Foreground="White" Margin="0,0,16,0" Checked="OnEffectChanged" />
+                    <RadioButton x:Name="EffectStrobe" Content="Стробоскоп"
+                                 Foreground="White" Margin="0,0,16,0" Checked="OnEffectChanged" />
+                    <RadioButton x:Name="EffectDiagonal" Content="По диагонали"
+                                 Foreground="White" Margin="0,0,16,0" Checked="OnEffectChanged" />
+                    <RadioButton x:Name="EffectRadial" Content="Из центра"
+                                 Foreground="White" Margin="0,0,16,0" Checked="OnEffectChanged" />
+                    <RadioButton x:Name="EffectRotate" Content="Вращение"
+                                 Foreground="White" Checked="OnEffectChanged" />
+                </StackPanel>
+
+                <!-- Стробоскоп: цвет держится и плавно переходит в следующий
+                     через заданный интервал. -->
+                <StackPanel x:Name="StrobePanel" Visibility="Collapsed" Margin="0,10,0,0">
+                    <TextBlock Text="Держать цвет" Foreground="#CCCCCC" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="90" />
+                        </Grid.ColumnDefinitions>
+                        <Slider x:Name="HoldSlider" Grid.Column="0"
+                                Minimum="0.1" Maximum="5" Value="1"
+                                ValueChanged="OnHoldChanged" />
+                        <TextBlock x:Name="HoldText" Grid.Column="1" Foreground="White"
+                                   VerticalAlignment="Center" TextAlignment="Right" />
+                    </Grid>
+                    <TextBlock Text="Переход между цветами всегда плавный: резких скачков нет."
+                               Foreground="#888888" Margin="0,4,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!-- ==== Скорость ==== -->
+                <TextBlock Text="Скорость смены" Foreground="#CCCCCC" FontWeight="SemiBold" Margin="0,14,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="70" />
+                    </Grid.ColumnDefinitions>
+                    <Slider x:Name="SpeedSlider" Grid.Column="0"
+                            Minimum="1" Maximum="120" Value="30"
+                            ValueChanged="OnSpeedChanged" />
+                    <TextBlock x:Name="SpeedText" Grid.Column="1" Foreground="White"
+                               VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+
+                <!-- ==== Яркость ==== -->
+                <TextBlock Text="Яркость" Foreground="#CCCCCC" FontWeight="SemiBold" Margin="0,10,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="70" />
+                    </Grid.ColumnDefinitions>
+                    <Slider x:Name="BrightnessSlider" Grid.Column="0"
+                            Minimum="10" Maximum="100" Value="100"
+                            ValueChanged="OnBrightnessChanged" />
+                    <TextBlock x:Name="BrightnessText" Grid.Column="1" Foreground="White"
+                               VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                    <Button Content="Полный экран (F11)" Click="OnToggleFullscreen" MinWidth="160" />
+                    <Button Content="Скрыть панель" Click="OnHidePanel" MinWidth="130" />
+                    <Button Content="Выход" Click="OnExit" MinWidth="90" />
+                </StackPanel>
+
+                <TextBlock x:Name="StatusText" Foreground="#80FFD0" Margin="0,10,0,0"
+                           Text="Готово. Наведите мышь, чтобы показать панель." />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

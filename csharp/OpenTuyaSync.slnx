@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="OpenTuyaSync.Agent/OpenTuyaSync.Agent.csproj" />
+  <Project Path="OpenTuyaSync.Capture/OpenTuyaSync.Capture.csproj" />
+  <Project Path="OpenTuyaSync.Core/OpenTuyaSync.Core.csproj" />
+  <Project Path="OpenTuyaSync.Providers/OpenTuyaSync.Providers.csproj" />
+  <Project Path="OpenTuyaSync.Service/OpenTuyaSync.Service.csproj" />
+</Solution>

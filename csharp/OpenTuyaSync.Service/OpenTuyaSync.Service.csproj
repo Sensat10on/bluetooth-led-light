@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>OpenTuyaSync.Service</AssemblyName>
+    <RootNamespace>OpenTuyaSync.Service</RootNamespace>
+
+    <!-- Иконка встраивается в исполняемый файл: её видно в списке служб и
+         в проводнике. -->
+    <ApplicationIcon>..\assets\icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenTuyaSync.Core\OpenTuyaSync.Core.csproj" />
+    <ProjectReference Include="..\OpenTuyaSync.Providers\OpenTuyaSync.Providers.csproj" />
+  </ItemGroup>
+
+</Project>

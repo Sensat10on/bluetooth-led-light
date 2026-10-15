@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Захват экрана копирует пиксели через указатели: это горячий путь,
+         и проверки границ здесь стоят дороже, чем дают пользы. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenTuyaSync.Core\OpenTuyaSync.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Захват звука из колонок (WASAPI loopback) для режима музыки. -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+
+    <!-- DXGI Desktop Duplication: захват экрана, работающий с играми в
+         полноэкранном режиме.
+
+         Изначально interop был написан вручную, но получить кадр не
+         удавалось: DuplicateOutput проходил, а первый же AcquireNextFrame
+         возвращал DXGI_ERROR_UNSUPPORTED. Независимая проверка через
+         SharpDX на той же машине отдала кадры сразу, то есть дело было в
+         самодельных объявлениях COM-интерфейсов, а не в системе.
+         SharpDX проверен временем и покрывает ровно то, что здесь нужно. -->
+    <PackageReference Include="SharpDX" Version="4.2.0" />
+    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
+    <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
+  </ItemGroup>
+
+</Project>

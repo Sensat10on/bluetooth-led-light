@@ -1,0 +1,49 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Классический вид: системные цвета и шрифты Windows, без
+         декоративных эффектов. Такой интерфейс ожидаемо выглядит как
+         обычная панель управления и не рябит в глазах.
+
+         Стили вынесены в отдельный словарь, а не лежат в App.xaml, чтобы
+         их можно было подключать в проверке интерфейса (tools/UiTest):
+         App.xaml содержит x:Class, и загрузить его как словарь ресурсов
+         нельзя. -->
+
+    <Style TargetType="GroupBox">
+        <Setter Property="Margin" Value="0,0,0,8" />
+        <Setter Property="Padding" Value="8,4,8,8" />
+    </Style>
+
+    <Style TargetType="Button">
+        <Setter Property="Padding" Value="12,4" />
+        <Setter Property="Margin" Value="0,0,6,0" />
+        <Setter Property="MinWidth" Value="90" />
+    </Style>
+
+    <Style TargetType="Label">
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style TargetType="TextBlock">
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="HeaderText" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,0,0,6" />
+    </Style>
+
+    <Style x:Key="HintText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="#666666" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Margin" Value="0,4,0,0" />
+    </Style>
+
+    <Style TargetType="Slider">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="4,0" />
+    </Style>
+
+</ResourceDictionary>
