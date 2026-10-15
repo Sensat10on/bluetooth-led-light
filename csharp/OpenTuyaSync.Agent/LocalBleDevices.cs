@@ -190,6 +190,11 @@ public sealed class LocalBleDevices : IDisposable
     /// интерфейса. Поэтому список устройств берётся и используется под
     /// одной блокировкой: иначе устройство могло быть освобождено прямо во
     /// время отправки в него цвета, и подсветка вставала.
+    ///
+    /// Проверка IsConnected здесь намеренно НЕ делается: ручную команду
+    /// терять нельзя. Лента, ушедшая в сон, отвечает на первое обращение не
+    /// сразу, и отброшенная команда означала бы, что нажатие в окне ничего
+    /// не делает. Провайдер сам поднимает связь и повторяет запись.
     /// </summary>
     public void ApplyColor(Rgb color)
     {
@@ -197,8 +202,6 @@ public sealed class LocalBleDevices : IDisposable
         {
             foreach (var provider in _providers.Values)
             {
-                if (!provider.IsConnected) continue;
-
                 try { provider.SetColor(color); }
                 catch (Exception) { }
             }
@@ -211,8 +214,6 @@ public sealed class LocalBleDevices : IDisposable
         {
             foreach (var provider in _providers.Values)
             {
-                if (!provider.IsConnected) continue;
-
                 try { provider.TurnOn(); } catch (Exception) { }
             }
         }
@@ -224,8 +225,6 @@ public sealed class LocalBleDevices : IDisposable
         {
             foreach (var provider in _providers.Values)
             {
-                if (!provider.IsConnected) continue;
-
                 try { provider.TurnOff(); } catch (Exception) { }
             }
         }

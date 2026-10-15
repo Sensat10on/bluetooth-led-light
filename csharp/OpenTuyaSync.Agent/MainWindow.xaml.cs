@@ -875,8 +875,14 @@ public partial class MainWindow : Window
         if (!CommitDeviceEditor()) return;
 
         SaveConfig();
+
+        // Значение масштаба яркости пишется в журнал: при проверке
+        // сообщалось, что оно не сохраняется, и без записи непонятно, теряется
+        // оно до записи в файл или после.
+        AppendLog($"Устройство сохранено: {_selectedDevice?.Name}, " +
+                  $"масштаб яркости {(_selectedDevice?.BrightnessScale ?? 0) * 100:0}%");
+
         ReloadDeviceList();
-        AppendLog($"Устройство сохранено: {_selectedDevice?.Name}");
 
         // Устройства на службе пересобираются, чтобы применились новые
         // параметры подключения.
@@ -1173,26 +1179,45 @@ public partial class MainWindow : Window
         bool ok = response.Ok == true;
 
         StatusService.Text = ok ? "Служба: подключена" : "Служба: не запущена";
+
+        int serviceDevices = response.Devices?.Count(d => d.Connected) ?? 0;
+        int bleDevices = _localBle.ConnectedCount;
+
+        // Счётчики разделены намеренно: Bluetooth-ленты обслуживает
+        // приложение, а не служба (служба работает в сеансе 0, где
+        // Bluetooth недоступен). Общий счётчик без пояснения выглядел как
+        // ошибка: в разделе службы стоял ноль, хотя лента работала.
         ServiceStatusText.Text = ok
-            ? $"Служба отвечает. {response.Text}. Устройств подключено: {response.Devices?.Count ?? 0}."
+            ? $"Служба отвечает. {response.Text}\n" +
+              $"Сетевых устройств на службе: {serviceDevices}\n" +
+              $"Bluetooth-устройств в приложении: {bleDevices}"
             : "Служба не отвечает. Установите её кнопкой «Установить службу» " +
               "или запустите OpenTuyaSync.Service.exe --console для диагностики.";
 
         if (ok && response.Devices != null)
         {
-            var text = new StringBuilder("Устройства на службе:\n");
-            foreach (var device in response.Devices)
-                text.AppendLine($"  {(device.Connected ? "✔" : "✘")} {device.Name} — {device.Status}");
+            var text = new StringBuilder("Устройства на службе (сетевые):\n");
+
+            if (response.Devices.Count == 0)
+                text.AppendLine("  нет: Bluetooth-ленты обслуживает приложение, а не служба");
+            else
+                foreach (var device in response.Devices)
+                    text.AppendLine($"  {(device.Connected ? "✔" : "✘")} {device.Name} — {device.Status}");
 
             AppendLog(text.ToString().TrimEnd());
         }
 
         if (showDialog)
         {
-            MessageBox.Show(this,
-                ok ? $"{response.Text}\nУстройств подключено: {response.Devices?.Count ?? 0}."
-                   : "Служба не отвечает.",
-                "Состояние службы", MessageBoxButton.OK,
+            string summary = ok
+                ? $"{response.Text}\n\n" +
+                  $"Сетевых устройств на службе: {serviceDevices}\n" +
+                  $"Bluetooth-устройств в приложении: {bleDevices}\n\n" +
+                  "Bluetooth-ленты обслуживает приложение: служба Windows работает " +
+                  "в изолированном сеансе, где Bluetooth недоступен."
+                : "Служба не отвечает.";
+
+            MessageBox.Show(this, summary, "Состояние службы", MessageBoxButton.OK,
                 ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
 

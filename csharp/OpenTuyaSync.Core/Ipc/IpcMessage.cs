@@ -108,6 +108,15 @@ public sealed class DiscoveredDevice
     public string Caption => IsBluetooth
         ? (string.IsNullOrWhiteSpace(Name) ? "(без имени)" : Name) + "  ·  " + Address
         : Address + "  ·  " + Id + "  ·  v" + Version.ToString("0.0");
+
+    /// <summary>
+    /// Строка для списка найденных устройств.
+    ///
+    /// Нужна потому, что найденные устройства показываются в списке как
+    /// есть, а без этого метода список выводил имя класса
+    /// («OpenTuyaSync.Core.Ipc.DiscoveredDevice») вместо названия и адреса.
+    /// </summary>
+    public override string ToString() => Caption;
 }
 
 /// <summary>

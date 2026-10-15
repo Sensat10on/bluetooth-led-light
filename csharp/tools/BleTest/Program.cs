@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using OpenTuyaSync.Providers;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
@@ -35,8 +35,24 @@ switch (command)
     case "flow":
         return args.Length > 1 ? await Flow(args[1]) : MissingMac();
 
+    // Перезапуск Bluetooth-радио: проверка, может ли приложение само снять
+    // залипший кэш GATT, когда Windows отказывает в доступе к службе ленты.
+    case "restart-radio":
+    {
+        Console.WriteLine("Перезапуск Bluetooth-радио...");
+
+        bool started = OpenTuyaSync.Providers.ElkBledobProvider.RestartBluetoothRadioAsync()
+            .GetAwaiter().GetResult();
+
+        Console.WriteLine(started
+            ? "Радио перезапущено."
+            : "Не удалось: либо нет прав на управление радио, либо Bluetooth не найден.");
+
+        return started ? 0 : 1;
+    }
+
     default:
-        Console.WriteLine("Неизвестная команда. Доступно: scan, info, color, power, flow");
+        Console.WriteLine("Неизвестная команда. Доступно: scan, info, color, power, flow, restart-radio");
         return 1;
 }
 

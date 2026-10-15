@@ -15,7 +15,7 @@ rem   ColorTest     -- заливка экрана для проверки по�
 echo Сборка утилит...
 echo.
 
-for %%T in (CaptureTest PipeTest DxgiProbe BleTest UiTest ReconnectTest ColorTest) do (
+for %%T in (CaptureTest PipeTest DxgiProbe BleTest UiTest ReconnectTest ColorTest ConfigTest) do (
   echo   %%T
   dotnet build "tools\%%T\%%T.csproj" -c Release --nologo -v q
   if errorlevel 1 goto fail
@@ -34,8 +34,12 @@ echo   Проверка подключения ленты кодом прило�
 echo     tools\ReconnectTest\bin\Release\net10.0-windows10.0.19041.0\OpenTuyaSync.ReconnectTest.exe ble
 echo   Проверка построения окна:
 echo     tools\UiTest\bin\Release\net10.0-windows10.0.19041.0\OpenTuyaSync.UiTest.exe
+echo   Проверка сохранения настроек:
+echo     tools\ConfigTest\bin\Release\net10.0-windows\OpenTuyaSync.ConfigTest.exe
 echo   Тест подсветки на весь экран:
 echo     tools\ColorTest\bin\Release\net10.0-windows\OpenTuyaSync.ColorTest.exe
+echo   Проверка подсветки по веб-камере (нужен OpenCV):
+echo     python tools\CameraCheck\camera_check.py --mac MAC-АДРЕС
 echo.
 pause
 exit /b 0

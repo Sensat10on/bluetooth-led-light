@@ -250,9 +250,21 @@ public sealed class ElkBledobProvider : IColorProvider
 
                 if (accessDenied)
                 {
+                    // Отказ в доступе к характеристикам службы. Причина почти
+                    // всегда одна: устройство уже занято другим приложением.
+                    // У недорогих лент соединение только одно, и если с ней
+                    // работает приложение телефона (LotusLamp, NBBUFF и
+                    // подобные), компьютер получает отказ, хотя устройство
+                    // видно и даже числится подключённым.
+                    //
+                    // Сообщение поэтому называет самую вероятную причину, а не
+                    // только «залипший кэш»: второе встречается реже.
                     lastError = new InvalidOperationException(
-                        "Windows закрыл доступ к службе ленты (залипший кэш Bluetooth). " +
-                        "Выключите и включите Bluetooth в параметрах Windows -- это восстанавливает связь.");
+                        "Windows отказал в доступе к службе ленты. Обычно это значит, " +
+                        "что лента уже подключена к телефону: закройте приложение " +
+                        "ленты на телефоне или выключите на нём Bluetooth и повторите. " +
+                        "Реже помогает выключение и включение Bluetooth на компьютере.");
+
                     await Task.Delay(800);
                     continue;
                 }
@@ -295,9 +307,45 @@ public sealed class ElkBledobProvider : IColorProvider
             }
         }
 
+        // Последняя попытка поднять связь: пересоздаём устройство и читаем
+        // имя. Чтение имени заставляет Windows установить настоящую связь,
+        // после чего производительная служба обычно открывается. Это
+        // помогает, когда первые попытки упирались в устаревшее состояние
+        // соединения.
+        try
+        {
+            await DisposeDeviceAsync(1200);
+
+            _device = await BluetoothLEDevice.FromBluetoothAddressAsync(address);
+            if (_device != null)
+            {
+                var services = await _device.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+
+                foreach (var service in services.Services)
+                {
+                    var characteristics =
+                        await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+
+                    if (characteristics.Status != GattCommunicationStatus.Success) continue;
+
+                    foreach (var candidate in characteristics.Characteristics)
+                    {
+                        if (candidate.Uuid == WriteCharacteristic)
+                        {
+                            _characteristic = candidate;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+        }
+
         throw new InvalidOperationException(
-            $"Не удалось получить характеристику записи FFF3 за 5 попыток. " +
-            $"Доступные характеристики: {(lastAvailable.Length > 0 ? lastAvailable : "нет")}. " +
+            $"Не удалось получить характеристику записи FFF3 за {maxAttempts} попыток. " +
             $"Последняя ошибка: {lastError?.Message}");
     }
 
