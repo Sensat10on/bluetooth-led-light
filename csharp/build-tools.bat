@@ -15,7 +15,7 @@ rem   ColorTest     -- заливка экрана для проверки по�
 echo Сборка утилит...
 echo.
 
-for %%T in (CaptureTest PipeTest DxgiProbe BleTest UiTest ReconnectTest ColorTest ConfigTest) do (
+for %%T in (CaptureTest PipeTest DxgiProbe BleTest UiTest ReconnectTest ColorTest ConfigTest MusicTest) do (
   echo   %%T
   dotnet build "tools\%%T\%%T.csproj" -c Release --nologo -v q
   if errorlevel 1 goto fail
@@ -36,6 +36,8 @@ echo   Проверка построения окна:
 echo     tools\UiTest\bin\Release\net10.0-windows10.0.19041.0\OpenTuyaSync.UiTest.exe
 echo   Проверка сохранения настроек:
 echo     tools\ConfigTest\bin\Release\net10.0-windows\OpenTuyaSync.ConfigTest.exe
+echo   Проверка режима музыки (звук с колонок, не с микрофона):
+echo     tools\MusicTest\bin\Release\net10.0-windows\OpenTuyaSync.MusicTest.exe 8
 echo   Тест подсветки на весь экран:
 echo     tools\ColorTest\bin\Release\net10.0-windows\OpenTuyaSync.ColorTest.exe
 echo   Проверка подсветки по веб-камере (нужен OpenCV):

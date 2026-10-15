@@ -33,6 +33,11 @@ public partial class MainWindow : Window
 
     private bool _loadingUi;
 
+    /// <summary>
+    /// Признак программного изменения ползунков: цвет из палитры уже
+    /// отправлен, и обработчик ползунков не должен отправлять его повторно.
+    /// </summary>
+    private bool _suppressManualSend;
     public MainWindow(AppConfig config)
     {
         InitializeComponent();
@@ -56,8 +61,18 @@ public partial class MainWindow : Window
         LoadMonitorList();
         LoadAudioDeviceList();
         LoadDeviceTypeList();
+        BuildPalette();
         LoadUiFromConfig();
         ApplyHotkeys();
+
+        // Приводим ручной цвет к тому, что показывают ползунки.
+        //
+        // Обработчик изменения ползунков вызывается ещё при разборе XAML, и
+        // тогда он выходит сразу: элементы предпросмотра ещё не созданы. Из-за
+        // этого ручной цвет оставался значением по умолчанию (чёрным), хотя
+        // ползунки стояли на 255, а рамка предпросмотра была белой. Нажатие
+        // «Применить цвет» отправляло чёрный.
+        OnManualColorChanged(this, null!);
 
         AppendLog("OpenTuya Sync запущен.");
         AppendLog($"Каталог настроек: {ConfigStore.DataDirectory}");
@@ -550,6 +565,126 @@ public partial class MainWindow : Window
     private bool _reconnecting;
 
     /// <summary>
+    /// Палитра базовых цветов для ручного управления.
+    ///
+    /// Набор подобран по кругу оттенков: сначала яркие цвета, затем тёмные и
+    /// пастельные, в конце нейтральные. Так нужный цвет находится за один
+    /// взгляд, без подбора ползунками.
+    /// </summary>
+    private static readonly (string Name, byte R, byte G, byte B)[] PaletteColors =
+    {
+        // Тёплые
+        ("Красный",          255,   0,   0),
+        ("Алый",             255,  64,   0),
+        ("Оранжевый",        255, 128,   0),
+        ("Янтарный",         255, 176,   0),
+        ("Жёлтый",           255, 224,   0),
+        ("Лайм",             192, 255,   0),
+
+        // Холодные
+        ("Зелёный",            0, 255,   0),
+        ("Изумрудный",         0, 230, 118),
+        ("Бирюзовый",          0, 255, 200),
+        ("Голубой",            0, 200, 255),
+        ("Синий",              0,   0, 255),
+        ("Индиго",            64,   0, 255),
+
+        // Смешанные
+        ("Фиолетовый",       160,   0, 255),
+        ("Пурпурный",        255,   0, 200),
+        ("Розовый",          255,  64, 160),
+        ("Малиновый",        220,   0,  80),
+
+        // Тёмные
+        ("Тёмно-красный",    128,   0,   0),
+        ("Тёмно-зелёный",      0, 110,   0),
+        ("Тёмно-синий",        0,   0, 128),
+        ("Болотный",          96, 110,   0),
+
+        // Пастельные
+        ("Персиковый",       255, 200, 150),
+        ("Мятный",           180, 255, 220),
+        ("Небесный",         170, 210, 255),
+        ("Лавандовый",       200, 180, 255),
+
+        // Нейтральные
+        ("Белый",            255, 255, 255),
+        ("Тёплый белый",     255, 240, 210),
+        ("Холодный белый",   210, 240, 255),
+        ("Серый",            128, 128, 128),
+    };
+
+    /// <summary>
+    /// Строит палитру кнопками. Кнопка, а не рамка: она сама показывает
+    /// наведение и нажатие, и по ней видно, что цвет можно нажать.
+    /// </summary>
+    private void BuildPalette()
+    {
+        var panel = new WrapPanel();
+
+        foreach (var (name, r, g, b) in PaletteColors)
+        {
+            var button = new Button
+            {
+                Width = 34,
+                Height = 34,
+                Margin = new Thickness(0, 0, 4, 4),
+                Padding = new Thickness(0),
+
+                // Светлый фон кнопки заменяется цветом: кнопка и есть образец.
+                Background = new SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(r, g, b)),
+                BorderBrush = new SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x88, 0x88, 0x88)),
+                BorderThickness = new Thickness(1),
+                ToolTip = $"{name}  ·  {r},{g},{b}",
+                Tag = new Rgb(r / 255f, g / 255f, b / 255f),
+            };
+
+            button.Click += OnPaletteColorClick;
+            panel.Children.Add(button);
+        }
+
+        PalettePanel.Items.Add(panel);
+    }
+
+    /// <summary>
+    /// Нажатие цвета в палитре: останавливает автоматику и сразу отправляет
+    /// цвет. Так же работают остальные ручные действия -- иначе движок
+    /// перебивал бы выбранный цвет несколько раз в секунду.
+    /// </summary>
+    private void OnPaletteColorClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Rgb color }) return;
+
+        StopAutoForManualAction();
+
+        _manualColor = color;
+
+        // Ползунки и предпросмотр приводим к выбранному цвету, чтобы
+        // интерфейс показывал именно то, что отправлено.
+        _suppressManualSend = true;
+        try
+        {
+            var (r, g, b) = color.ToBytes();
+            RedSlider.Value = r;
+            GreenSlider.Value = g;
+            BlueSlider.Value = b;
+        }
+        finally
+        {
+            _suppressManualSend = false;
+        }
+
+        OnManualColorChanged(this, null!);
+
+        _service.SendColor(color);
+        _localBle.ApplyColor(color);
+
+        AppendLog($"Палитра: отправлен цвет {color}");
+    }
+
+    /// <summary>
     /// Останавливает автоматическую подсветку, если она работает.
     ///
     /// Нужно перед ручными действиями: иначе движок перебивает выбранный
@@ -586,6 +721,17 @@ public partial class MainWindow : Window
         ColorPreview.Background = new SolidColorBrush(
             System.Windows.Media.Color.FromRgb(
                 (byte)RedSlider.Value, (byte)GreenSlider.Value, (byte)BlueSlider.Value));
+
+        // Ползунки, изменённые из палитры, уже отправили цвет: повторять
+        // отправку не нужно.
+        if (_suppressManualSend) return;
+
+        if (_engine?.IsRunning == true)
+        {
+            // Во время автоматической подсветки ползунки только показывают
+            // цвет: отправлять его сейчас бессмысленно, движок перебьёт.
+            return;
+        }
     }
 
     private void OnApplyManualColor(object sender, RoutedEventArgs e)

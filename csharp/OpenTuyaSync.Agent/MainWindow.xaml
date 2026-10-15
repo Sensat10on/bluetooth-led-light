@@ -143,10 +143,15 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <GroupBox Grid.Row="0" Header="Цвет">
+                    <GroupBox Grid.Row="0" Header="Палитра: нажмите цвет -- он применится сразу">
+                        <ItemsControl x:Name="PalettePanel" Margin="0,2,0,0" />
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="1" Header="Цвет">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
@@ -179,7 +184,7 @@
                         </Grid>
                     </GroupBox>
 
-                    <GroupBox Grid.Row="1" Header="Предпросмотр и системный выбор цвета">
+                    <GroupBox Grid.Row="2" Header="Предпросмотр и системный выбор цвета">
                         <StackPanel Orientation="Horizontal">
                             <Border x:Name="ColorPreview" Width="120" Height="40"
                                     BorderBrush="{x:Static SystemColors.ControlDarkBrush}"
@@ -189,17 +194,19 @@
                         </StackPanel>
                     </GroupBox>
 
-                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,4,0,8">
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,4,0,8">
                         <Button Content="Применить цвет" Click="OnApplyManualColor" />
                         <Button Content="Включить" Click="OnManualPowerOn" />
                         <Button Content="Выключить" Click="OnManualPowerOff" />
                     </StackPanel>
 
-                    <GroupBox Grid.Row="3" Header="Подсказка">
+                    <GroupBox Grid.Row="4" Header="Подсказка">
                         <TextBlock Style="{StaticResource HintText}" Margin="0">
-                            Ручное управление работает, только когда автоматический источник остановлен:
-                            иначе движок подсветки будет перебивать выбранный цвет несколько раз в секунду.
-                            Ползунки меняют цвет плавно и отправляются на устройство с задержкой,
+                            Нажатие на цвет в палитре останавливает автоматический режим и сразу
+                            отправляет цвет на устройство. То же делают кнопки «Применить цвет» и
+                            «Включить»: ручное управление и автоматика не работают одновременно,
+                            иначе движок перебивал бы выбранный цвет несколько раз в секунду.
+                            Ползунки меняют цвет плавно, он уходит на устройство с задержкой,
                             чтобы не перегружать лампу.
                         </TextBlock>
                     </GroupBox>

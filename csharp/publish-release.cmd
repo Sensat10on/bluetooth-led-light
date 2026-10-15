@@ -42,6 +42,20 @@ echo Publishing color test tool...
 dotnet publish tools\ColorTest\ColorTest.csproj -c Release -o "%TOOLDIR%" --nologo -v q
 if errorlevel 1 goto fail
 
+rem Diagnostics tools. Only the compact ones go into the release: checking the
+rem screen capture, the service link, the music mode and the saved settings.
+rem
+rem BleTest and ReconnectTest are NOT included on purpose: they pull in
+rem Microsoft.Windows.SDK.NET.dll, which is 24 MB each, so the archive would
+rem grow from 8 to 30 MB. The same checks are available in the application
+rem itself: the "Check connection" button covers a single device.
+echo Publishing diagnostics tools...
+
+for %%T in (CaptureTest PipeTest MusicTest ConfigTest) do (
+  dotnet publish "tools\%%T\%%T.csproj" -c Release -o "%RELEASE%\tools\%%T" --nologo -v q
+  if errorlevel 1 goto fail
+)
+
 echo.
 echo Preparing extra files...
 
@@ -56,6 +70,13 @@ del /q "%TOOLDIR%\colortest_alive.txt" 2>nul
 rem Debug symbols only make the release bigger.
 del /q "%RELEASE%\*.pdb" 2>nul
 del /q "%TOOLDIR%\*.pdb" 2>nul
+for /d %%D in ("%RELEASE%\tools\*") do del /q "%%D\*.pdb" 2>nul
+
+rem Debug leftovers in the diagnostics tools.
+for /d %%D in ("%RELEASE%\tools\*") do (
+  del /q "%%D\config_test_data" 2>nul
+  rmdir /s /q "%%D\config_test_data" 2>nul
+)
 
 rem Extra files: settings, instructions, icons. Cyrillic names are taken from
 rem the source folder as-is, so no non-ASCII text is needed in this file.

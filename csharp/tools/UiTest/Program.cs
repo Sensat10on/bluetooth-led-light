@@ -5,7 +5,6 @@ using System.Windows.Media;
 using OpenTuyaSync.Agent;
 using OpenTuyaSync.Core;
 using OpenTuyaSync.Core.Ipc;
-
 // Проверка интерфейса: создаёт главное окно и убеждается, что разметка
 // разбирается без ошибок.
 //
@@ -21,6 +20,8 @@ using OpenTuyaSync.Core.Ipc;
 // Одновременно подключены WPF и Windows Forms, поэтому часть имён
 // совпадает. Псевдонимы фиксируют, что берётся из WPF.
 using Application = System.Windows.Application;
+using Button = System.Windows.Controls.Button;
+using Color = System.Windows.Media.Color;
 using TabControl = System.Windows.Controls.TabControl;
 using TabItem = System.Windows.Controls.TabItem;
 
@@ -123,6 +124,93 @@ internal static class Program
                 return 1;
             }
 
+            // Палитра ручного управления: у каждой кнопки должен быть цвет.
+            // Проверяем потому, что палитра строится кодом, а не разметкой:
+            // ошибка в построении оставила бы вкладку пустой, и это не было бы
+            // видно по разбору XAML.
+            //
+            // Ищем по имени, а не обходом визуального дерева: вкладка
+            // «Вручную» не открыта, и её элементы ещё не созданы. Имя доступно
+            // сразу после разбора разметки.
+            var palette = window.FindName("PalettePanel") as ItemsControl;
+
+            if (palette == null)
+            {
+                Console.Error.WriteLine("  ОШИБКА: не найдена палитра цветов");
+                return 1;
+            }
+
+            int swatches = 0;
+            var distinct = new HashSet<string>();
+
+            foreach (var item in palette.Items)
+            {
+                if (item is not WrapPanel panel) continue;
+
+                foreach (var child in panel.Children)
+                {
+                    if (child is not Button { Tag: Rgb color } button) continue;
+
+                    swatches++;
+
+                    if (button.Background is SolidColorBrush brush)
+                    {
+                        var (r, g, b) = color.ToBytes();
+                        distinct.Add($"{brush.Color.R},{brush.Color.G},{brush.Color.B}");
+
+                        // Цвет кнопки должен совпадать с цветом в Tag: иначе
+                        // кнопка показывала бы один цвет, а отправлялся другой.
+                        if (brush.Color.R != r || brush.Color.G != g || brush.Color.B != b)
+                        {
+                            Console.Error.WriteLine(
+                                $"  ОШИБКА: кнопка {brush.Color} не совпадает с цветом {r},{g},{b}");
+                            return 1;
+                        }
+                    }
+                }
+            }
+
+            Console.WriteLine($"  кнопок в палитре: {swatches}, различных цветов: {distinct.Count}");
+
+            // Проверяем, что окно действительно загрузилось: обработчик
+            // загрузки заполняет список устройств и журнал. Без этого
+            // проверка палитры ничего не значила бы.
+            bool loaded = window.IsLoaded;
+            Console.WriteLine($"  окно загружено: {loaded}");
+
+            var preview = window.FindName("ColorPreview") as Border;
+            if (preview?.Background is SolidColorBrush previewBrush)
+            {
+                var c = previewBrush.Color;
+                Console.WriteLine($"  предпросмотр ручного цвета: {c.R},{c.G},{c.B}");
+
+                // Ползунки по умолчанию стоят на 255, и предпросмотр должен
+                // совпадать с ними. Раньше он оставался белым, а отправлялся
+                // цвет по умолчанию -- чёрный.
+                var red = window.FindName("RedSlider") as Slider;
+                if (red != null)
+                {
+                    Console.WriteLine($"  ползунок красного: {red.Value:0}");
+                }
+            }
+
+            // Снимок окна: удобно посмотреть, как выглядит разметка, не
+            // запуская программу вручную. Файл кладётся рядом с проверкой.
+            SaveScreenshot(window, "ui_palette.png", manualTab: true);
+            SaveScreenshot(window, "ui_automatic.png", manualTab: false);
+
+            if (swatches < 20)
+            {
+                Console.Error.WriteLine($"  ОШИБКА: в палитре {swatches} кнопок, ожидалось не меньше 20");
+                return 1;
+            }
+
+            if (distinct.Count != swatches)
+            {
+                Console.Error.WriteLine("  ОШИБКА: в палитре есть повторяющиеся цвета");
+                return 1;
+            }
+
             window.Close();
             app.Shutdown();
 
@@ -141,15 +229,79 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// Сохраняет снимок окна в файл рядом с проверкой.
+    ///
+    /// Окно сначала показывается: без этого вкладка не строится, и на снимке
+    /// был бы пустой прямоугольник.
+    /// </summary>
+    private static void SaveScreenshot(Window window, string fileName, bool manualTab)
+    {
+        try
+        {
+            window.Show();
+
+            // Открываем нужную вкладку, чтобы её содержимое построилось.
+            var tabs = FindChild<TabControl>(window);
+            if (tabs != null && tabs.Items.Count > 1)
+                tabs.SelectedIndex = manualTab ? 1 : 0;
+
+            window.UpdateLayout();
+
+            // Даём разметке разложиться: без прокрутки очереди сообщений
+            // часть элементов ещё не отрисована.
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            window.Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.ContextIdle,
+                new Action(() => frame.Continue = false));
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+
+            window.UpdateLayout();
+
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                (int)window.ActualWidth, (int)window.ActualHeight, 96, 96,
+                PixelFormats.Pbgra32);
+
+            bitmap.Render(window);
+
+            var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+
+            string path = Path.Combine(AppContext.BaseDirectory, fileName);
+            using var stream = File.Create(path);
+            encoder.Save(stream);
+
+            Console.WriteLine($"  снимок окна: {fileName}");
+
+            window.Hide();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"  снимок окна не сделан: {ex.Message}");
+        }
+    }
+
     private static T? FindChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        return FindChild<T>(parent, _ => true);
+    }
+
+    /// <summary>Ищет элемент заданного типа, у которого имя подходит под условие.</summary>
+    private static T? FindChild<T>(DependencyObject parent, Func<string, bool> nameMatches)
+        where T : DependencyObject
     {
         int count = VisualTreeHelper.GetChildrenCount(parent);
         for (int i = 0; i < count; i++)
         {
             var child = VisualTreeHelper.GetChild(parent, i);
-            if (child is T match) return match;
 
-            var found = FindChild<T>(child);
+            if (child is T match)
+            {
+                string name = (match as FrameworkElement)?.Name ?? "";
+                if (nameMatches(name)) return match;
+            }
+
+            var found = FindChild<T>(child, nameMatches);
             if (found != null) return found;
         }
 

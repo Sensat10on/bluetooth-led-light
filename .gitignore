@@ -23,6 +23,8 @@ colortest_alive.txt
 colortest_crash.log
 selftest_*.png
 selftest_report.txt
+ui_palette.png
+ui_automatic.png
 
 # -------------------------------------------------------------------- прочее
 .DS_Store
