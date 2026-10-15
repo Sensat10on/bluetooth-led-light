@@ -445,7 +445,7 @@ OpenTuyaSync.ColorTest.exe --selftest
 
 ## Иконка приложения
 
-Иконка собирается скриптом [assets/make_icon.py](../assets/make_icon.py) из
+Иконка собирается скриптом [assets/make_icon.py](assets/make_icon.py) из
 готового изображения `assets/icon_source.jpg`: монитор с радужной
 подсветкой по краям и знаком Bluetooth на экране.
 
