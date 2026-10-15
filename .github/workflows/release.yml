@@ -62,7 +62,7 @@ jobs:
           #
           # Проверка "Test-Path" нужна потому, что папка может не содержать
           # файлов нужного вида, а Copy-Item на пустом шаблоне падает.
-          foreach ($pattern in 'release-files\*.bat', 'release-files\*.txt', 'assets\icon.ico') {
+          foreach ($pattern in 'release-files\*.bat', 'release-files\*.txt', 'release-files\*.ps1', 'assets\icon.ico') {
             if (Test-Path $pattern) {
               Copy-Item $pattern Releases\ -Force
               Write-Output "  скопировано: $pattern"
