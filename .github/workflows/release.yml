@@ -29,70 +29,24 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Публикация приложения и службы
-        working-directory: csharp
-        run: |
-          dotnet publish OpenTuyaSync.Agent\OpenTuyaSync.Agent.csproj -c Release -o Releases --nologo -v q
-          dotnet publish OpenTuyaSync.Service\OpenTuyaSync.Service.csproj -c Release -o Releases --nologo -v q
-
-      - name: Публикация теста подсветки
-        working-directory: csharp
-        run: dotnet publish tools\ColorTest\ColorTest.csproj -c Release -o Releases\tools\ColorTest --nologo -v q
-
-      # Компактные утилиты диагностики. BleTest и ReconnectTest сюда НЕ
-      # входят намеренно: каждая тянет Microsoft.Windows.SDK.NET.dll на
-      # 24 МБ, и архив вырос бы с 9 до 30 МБ. Те же проверки есть в самом
-      # приложении -- кнопка «Проверить связь».
-      - name: Публикация утилит диагностики
-        working-directory: csharp
-        run: |
-          foreach ($tool in 'CaptureTest', 'PipeTest', 'MusicTest', 'ConfigTest') {
-            dotnet publish "tools\$tool\$tool.csproj" -c Release -o "Releases\tools\$tool" --nologo -v q
-            if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать утилиту $tool" }
-          }
-
-      - name: Подготовка вспомогательных файлов
+      # Сборка идёт тем же скриптом, что и локально: проекты собираются
+      # параллельно, вспомогательные файлы копируются, справка собирается,
+      # и архив упаковывается. Так релиз с сервера не отличается от
+      # локального, а логика сборки описана в одном месте.
+      - name: Сборка релиза
         working-directory: csharp
         shell: pwsh
         run: |
-          # Отладочные символы в релизе не нужны.
-          Get-ChildItem Releases -Recurse -Include *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
+          # Версию берём из тега, чтобы имя архива совпадало с релизом.
+          $version = '${{ github.ref_name }}' -replace '^v', ''
 
-          # Инструкция, скрипты установки и значок.
-          #
-          # Проверка "Test-Path" нужна потому, что папка может не содержать
-          # файлов нужного вида, а Copy-Item на пустом шаблоне падает.
-          foreach ($pattern in 'release-files\*.bat', 'release-files\*.txt', 'release-files\*.ps1', 'assets\icon.ico') {
-            if (Test-Path $pattern) {
-              Copy-Item $pattern Releases\ -Force
-              Write-Output "  скопировано: $pattern"
-            }
-          }
+          & powershell -NoProfile -ExecutionPolicy Bypass `
+              -File publish-release.ps1 -Version $version
 
-          # Настройки по умолчанию.
-          #
-          # config.json намеренно не хранится в репозитории: в нём лежат
-          # идентификаторы устройств и ключи доступа. Поэтому для релиза
-          # создаётся пустой файл настроек -- пользователь заполняет его сам
-          # через вкладку «Настройки», а недостающие поля приложение
-          # дополняет значениями по умолчанию.
-          if (-not (Test-Path 'Releases\config.json')) {
-            $config = [ordered]@{
-              devices               = @()
-              auto_start            = $false
-              start_minimized       = $false
-              restore_scene_on_exit = $false
-              active_source         = 'screen'
-              auto_start_capture    = $false
-            }
-            $config | ConvertTo-Json -Depth 5 | Set-Content 'Releases\config.json' -Encoding UTF8
-            Write-Output '  создан пустой config.json'
-          }
+          if ($LASTEXITCODE -ne 0) { throw 'Сборка релиза не удалась' }
 
-          # Полная справка: markdown преобразуется в обычный текст.
-          powershell -NoProfile -ExecutionPolicy Bypass -File make-guide.ps1 -Output Releases
-
-          if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать справку" }
+      # Вспомогательные файлы, настройки и справку готовит сам
+      # publish-release.ps1: отдельный шаг не нужен.
 
       - name: Проверка сборки
         working-directory: csharp
@@ -103,6 +57,7 @@ jobs:
           foreach ($file in 'Releases\OpenTuyaSync.exe',
                             'Releases\OpenTuyaSync.Service.exe',
                             'Releases\tools\ColorTest\OpenTuyaSync.ColorTest.exe',
+                            'Releases\ВОССТАНОВИТЬ-BLUETOOTH.ps1',
                             'Releases\СПРАВКА.txt',
                             'Releases\config.json') {
             if (-not (Test-Path $file)) { throw "Не найден файл релиза: $file" }
@@ -110,19 +65,15 @@ jobs:
             Write-Output "  $file -- $size КБ"
           }
 
-          Write-Output ''
-          Write-Output 'Проверка пройдена.'
-
-      - name: Сборка архива
-        working-directory: csharp
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
+          # Архив собирает сам publish-release.ps1 -- проверяем, что он есть.
           $version = '${{ github.ref_name }}' -replace '^v', ''
           $zip = "Releases\OpenTuyaSync-v$version.zip"
-          Remove-Item $zip -Force -ErrorAction SilentlyContinue
-          Compress-Archive -Path 'Releases\*' -DestinationPath $zip -CompressionLevel Optimal
-          Write-Output "Архив: $zip ($([math]::Round((Get-Item $zip).Length/1MB,2)) МБ)"
+
+          if (-not (Test-Path $zip)) { throw "Не найден архив релиза: $zip" }
+          Write-Output ''
+          Write-Output "  $zip -- $([math]::Round((Get-Item $zip).Length / 1MB, 2)) МБ"
+          Write-Output ''
+          Write-Output 'Проверка пройдена.'
 
       - name: Публикация релиза
         uses: softprops/action-gh-release@v3
