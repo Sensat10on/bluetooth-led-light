@@ -22,10 +22,10 @@ jobs:
 
     steps:
       - name: Получение исходников
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Установка .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -113,7 +113,7 @@ jobs:
           Write-Output "Архив: $zip ($([math]::Round((Get-Item $zip).Length/1MB,2)) МБ)"
 
       - name: Публикация релиза
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: OpenTuya Sync ${{ github.ref_name }}
           files: csharp/Releases/OpenTuyaSync-*.zip
