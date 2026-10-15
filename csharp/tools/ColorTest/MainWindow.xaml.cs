@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -23,7 +23,7 @@ namespace OpenTuyaSync.ColorTest;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private enum Effect
+    private enum ColorEffect
     {
         Sweep,
 
@@ -48,7 +48,7 @@ public partial class MainWindow : Window
 
     private DateTime _lastMouseMove = DateTime.UtcNow;
 
-    private Effect _effect = Effect.Sweep;
+    private ColorEffect _effect = ColorEffect.Sweep;
     private double _phase;
     private double _brightness = 1.0;
     private int _speed = 30;
@@ -254,18 +254,18 @@ public partial class MainWindow : Window
         if (EffectStrobe == null || EffectDiagonal == null
             || EffectRadial == null || EffectRotate == null) return;
 
-        _effect = EffectStrobe.IsChecked == true ? Effect.Strobe
-            : EffectDiagonal.IsChecked == true ? Effect.Diagonal
-            : EffectRadial.IsChecked == true ? Effect.Radial
-            : EffectRotate.IsChecked == true ? Effect.Rotate
-            : Effect.Sweep;
+        _effect = EffectStrobe.IsChecked == true ? ColorEffect.Strobe
+            : EffectDiagonal.IsChecked == true ? ColorEffect.Diagonal
+            : EffectRadial.IsChecked == true ? ColorEffect.Radial
+            : EffectRotate.IsChecked == true ? ColorEffect.Rotate
+            : ColorEffect.Sweep;
 
         _phase = 0;
         _strobeFrom = 0;
         _strobeTransitionStart = DateTime.UtcNow;
 
         // Настройка интервала нужна только стробоскопу.
-        StrobePanel.Visibility = _effect == Effect.Strobe
+        StrobePanel.Visibility = _effect == ColorEffect.Strobe
             ? Visibility.Visible
             : Visibility.Collapsed;
 
@@ -274,13 +274,13 @@ public partial class MainWindow : Window
         Status($"Эффект: {EffectName(_effect)}");
     }
 
-    private static string EffectName(Effect effect) => effect switch
+    private static string EffectName(ColorEffect effect) => effect switch
     {
-        Effect.Sweep => "переливание",
-        Effect.Strobe => "стробоскоп",
-        Effect.Diagonal => "по диагонали",
-        Effect.Radial => "из центра",
-        Effect.Rotate => "вращение",
+        ColorEffect.Sweep => "переливание",
+        ColorEffect.Strobe => "стробоскоп",
+        ColorEffect.Diagonal => "по диагонали",
+        ColorEffect.Radial => "из центра",
+        ColorEffect.Rotate => "вращение",
         _ => effect.ToString(),
     };
 
@@ -340,7 +340,7 @@ public partial class MainWindow : Window
 
         // Стробоскоп заливает экран одним цветом, который плавно меняется
         // на следующий. Градиент здесь не строится вовсе.
-        if (_effect == Effect.Strobe)
+        if (_effect == ColorEffect.Strobe)
         {
             ScreenRect.Fill = new SolidColorBrush(StrobeColor());
             return;
@@ -352,10 +352,10 @@ public partial class MainWindow : Window
 
         ScreenRect.Fill = _effect switch
         {
-            Effect.Sweep => BuildLinear(stops, new Point(0, 0.5), new Point(1, 0.5), _phase),
-            Effect.Diagonal => BuildLinear(stops, new Point(0, 0), new Point(1, 1), _phase),
-            Effect.Rotate => BuildLinear(stops, StartPoint(_phase), EndPoint(_phase), 0),
-            Effect.Radial => BuildRadial(stops),
+            ColorEffect.Sweep => BuildLinear(stops, new Point(0, 0.5), new Point(1, 0.5), _phase),
+            ColorEffect.Diagonal => BuildLinear(stops, new Point(0, 0), new Point(1, 1), _phase),
+            ColorEffect.Rotate => BuildLinear(stops, StartPoint(_phase), EndPoint(_phase), 0),
+            ColorEffect.Radial => BuildRadial(stops),
             _ => BuildLinear(stops, new Point(0, 0.5), new Point(1, 0.5), _phase),
         };
     }
@@ -585,11 +585,11 @@ public partial class MainWindow : Window
     {
         _effect = name switch
         {
-            "Стробоскоп" => Effect.Strobe,
-            "По диагонали" => Effect.Diagonal,
-            "Из центра" => Effect.Radial,
-            "Вращение" => Effect.Rotate,
-            _ => Effect.Sweep,
+            "Стробоскоп" => ColorEffect.Strobe,
+            "По диагонали" => ColorEffect.Diagonal,
+            "Из центра" => ColorEffect.Radial,
+            "Вращение" => ColorEffect.Rotate,
+            _ => ColorEffect.Sweep,
         };
 
         Redraw();

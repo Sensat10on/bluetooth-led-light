@@ -14,6 +14,13 @@
     <RootNamespace>OpenTuyaSync.ColorTest</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+
+    <!-- WinForms предупреждает, что настройки DPI надо задавать через его
+         API, а не в манифесте. Предупреждение здесь не по делу: программа
+         на WPF, а из WinForms взят только диалог выбора цвета. Настройки в
+         манифесте при этом верные и нужны: без них интерфейс размывается
+         на мониторах с масштабом от 125 %. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

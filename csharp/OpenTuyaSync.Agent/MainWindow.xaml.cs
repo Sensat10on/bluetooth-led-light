@@ -32,7 +32,6 @@ public partial class MainWindow : Window
     private Rgb _manualColor = new(1f, 1f, 1f);
 
     private bool _loadingUi;
-    private bool _suppressAutoColorSend;
 
     public MainWindow(AppConfig config)
     {
@@ -630,17 +629,11 @@ public partial class MainWindow : Window
 
         if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
 
-        _suppressAutoColorSend = true;
-        try
-        {
-            RedSlider.Value = dialog.Color.R;
-            GreenSlider.Value = dialog.Color.G;
-            BlueSlider.Value = dialog.Color.B;
-        }
-        finally
-        {
-            _suppressAutoColorSend = false;
-        }
+        // Ползунки получают новые значения; обработчик изменения сам
+        // обновит предпросмотр и запомнит выбранный цвет.
+        RedSlider.Value = dialog.Color.R;
+        GreenSlider.Value = dialog.Color.G;
+        BlueSlider.Value = dialog.Color.B;
 
         OnManualColorChanged(this, null!);
     }
