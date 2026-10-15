@@ -39,6 +39,18 @@ jobs:
         working-directory: csharp
         run: dotnet publish tools\ColorTest\ColorTest.csproj -c Release -o Releases\tools\ColorTest --nologo -v q
 
+      # Компактные утилиты диагностики. BleTest и ReconnectTest сюда НЕ
+      # входят намеренно: каждая тянет Microsoft.Windows.SDK.NET.dll на
+      # 24 МБ, и архив вырос бы с 9 до 30 МБ. Те же проверки есть в самом
+      # приложении -- кнопка «Проверить связь».
+      - name: Публикация утилит диагностики
+        working-directory: csharp
+        run: |
+          foreach ($tool in 'CaptureTest', 'PipeTest', 'MusicTest', 'ConfigTest') {
+            dotnet publish "tools\$tool\$tool.csproj" -c Release -o "Releases\tools\$tool" --nologo -v q
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать утилиту $tool" }
+          }
+
       - name: Подготовка вспомогательных файлов
         working-directory: csharp
         shell: pwsh
