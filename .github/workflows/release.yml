@@ -43,15 +43,19 @@ jobs:
         working-directory: csharp
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-
           # Отладочные символы в релизе не нужны.
           Get-ChildItem Releases -Recurse -Include *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
 
           # Инструкция, скрипты установки и значок.
-          Copy-Item release-files\*.bat Releases\ -Force
-          Copy-Item release-files\*.txt Releases\ -Force
-          Copy-Item assets\icon.ico Releases\ -Force
+          #
+          # Проверка "Test-Path" нужна потому, что папка может не содержать
+          # файлов нужного вида, а Copy-Item на пустом шаблоне падает.
+          foreach ($pattern in 'release-files\*.bat', 'release-files\*.txt', 'assets\icon.ico') {
+            if (Test-Path $pattern) {
+              Copy-Item $pattern Releases\ -Force
+              Write-Output "  скопировано: $pattern"
+            }
+          }
 
           # Настройки по умолчанию.
           #
@@ -62,20 +66,21 @@ jobs:
           # дополняет значениями по умолчанию.
           if (-not (Test-Path 'Releases\config.json')) {
             $config = [ordered]@{
-              devices                  = @()
-              auto_start               = $false
-              start_minimized          = $false
-              restore_scene_on_exit    = $false
-              active_source            = 'screen'
-              auto_start_capture       = $false
+              devices               = @()
+              auto_start            = $false
+              start_minimized       = $false
+              restore_scene_on_exit = $false
+              active_source         = 'screen'
+              auto_start_capture    = $false
             }
-            $config | ConvertTo-Json -Depth 5 |
-              Set-Content 'Releases\config.json' -Encoding UTF8
-            Write-Output 'Создан пустой config.json'
+            $config | ConvertTo-Json -Depth 5 | Set-Content 'Releases\config.json' -Encoding UTF8
+            Write-Output '  создан пустой config.json'
           }
 
           # Полная справка: markdown преобразуется в обычный текст.
           powershell -NoProfile -ExecutionPolicy Bypass -File make-guide.ps1 -Output Releases
+
+          if ($LASTEXITCODE -ne 0) { throw "Не удалось собрать справку" }
 
       - name: Проверка сборки
         working-directory: csharp
