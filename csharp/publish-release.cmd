@@ -78,9 +78,10 @@ for /d %%D in ("%RELEASE%\tools\*") do (
   rmdir /s /q "%%D\config_test_data" 2>nul
 )
 
-rem Extra files: settings, instructions, icons. Cyrillic names are taken from
-rem the source folder as-is, so no non-ASCII text is needed in this file.
-for %%F in ("%FILES%\config.json" "%FILES%\*.bat" "%FILES%\*.txt" "assets\icon.ico") do (
+rem Extra files: settings, instructions, icons, the Bluetooth recovery script.
+rem Cyrillic names are taken from the source folder as-is, so no non-ASCII
+rem text is needed in this file.
+for %%F in ("%FILES%\config.json" "%FILES%\*.bat" "%FILES%\*.txt" "%FILES%\*.ps1" "assets\icon.ico") do (
   copy /y "%%~F" "%RELEASE%\" >nul
 )
 

@@ -44,6 +44,11 @@ public partial class MainWindow : Window
 
         _config = config;
 
+        // Неудача подключения Bluetooth-ленты приходит из фонового потока:
+        // без этого сообщения пользователь видел только бесконечное
+        // «Bluetooth: подключение...» и не знал причины.
+        _localBle.ConnectFailed += OnBleConnectFailed;
+
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
         _statusTimer.Tick += (_, _) => RefreshStatus();
         _statusTimer.Start();
@@ -51,6 +56,100 @@ public partial class MainWindow : Window
         Loaded += OnWindowLoaded;
         Closing += OnWindowClosing;
     }
+
+    /// <summary>
+    /// Подключиться к Bluetooth-ленте не удалось.
+    ///
+    /// Приложение само пробует восстановить адаптер: Windows иногда
+    /// «залипает» и отвечает отказом в доступе к службе ленты, хотя
+    /// устройство видно. Перезапуск службы Bluetooth тут не помогает --
+    /// нужен перезапуск самого адаптера, а для него требуются права
+    /// администратора, поэтому один раз появляется запрос.
+    ///
+    /// Повтор автоматического восстановления ограничен по времени: иначе
+    /// окно с запросом прав появлялось бы при каждой попытке подключения.
+    /// </summary>
+    private void OnBleConnectFailed(string message)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _lastBleError = message;
+            AppendLog($"Bluetooth: {message}");
+
+            // Первая неудача ещё не повод перезапускать адаптер: лента могла
+            // просто уйти в сон, и повторное подключение обычно срабатывает.
+            if (DateTime.UtcNow - _lastBluetoothRecovery < RecoveryCooldown)
+            {
+                AppendLog("Bluetooth: повторное подключение не помогло, " +
+                          "восстановление адаптера пропущено (недавно уже выполнялось).");
+                return;
+            }
+
+            _lastBluetoothRecovery = DateTime.UtcNow;
+
+            AppendLog("Bluetooth: пробую восстановить адаптер. " +
+                      "Появится запрос прав -- нажмите «Да».");
+
+            Task.Run(RestartBluetoothAdapter);
+        }));
+    }
+
+    /// <summary>Как часто разрешено автоматически перезапускать адаптер.</summary>
+    private static readonly TimeSpan RecoveryCooldown = TimeSpan.FromMinutes(2);
+
+    private DateTime _lastBluetoothRecovery = DateTime.MinValue;
+
+    /// <summary>
+    /// Перезапускает Bluetooth-адаптер сценарием из папки программы.
+    ///
+    /// Сценарий сам запрашивает права администратора: без них управление
+    /// устройствами невозможно. После перезапуска подключение повторяется
+    /// автоматически, чтобы пользователю не пришлось ничего нажимать.
+    /// </summary>
+    private void RestartBluetoothAdapter()
+    {
+        try
+        {
+            string script = Path.Combine(AppContext.BaseDirectory, "ВОССТАНОВИТЬ-BLUETOOTH.ps1");
+
+            if (!File.Exists(script))
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                    AppendLog("Bluetooth: не найден сценарий восстановления " +
+                              "ВОССТАНОВИТЬ-BLUETOOTH.ps1")));
+                return;
+            }
+
+            var start = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
+                UseShellExecute = true,
+                Verb = "runas",              // запрос прав администратора
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Minimized,
+            };
+
+            using var process = System.Diagnostics.Process.Start(start);
+            process?.WaitForExit(60000);
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                AppendLog("Bluetooth: адаптер перезапущен, подключаюсь заново.");
+                StartCapture(silent: true);
+            }));
+        }
+        catch (Exception ex)
+        {
+            // Отказ в запросе прав -- не ошибка приложения: сообщаем и
+            // оставляем ручной сценарий.
+            Dispatcher.BeginInvoke(new Action(() =>
+                AppendLog($"Bluetooth: восстановить адаптер не удалось ({ex.Message}). " +
+                          "Запустите ВОССТАНОВИТЬ-BLUETOOTH.ps1 вручную.")));
+        }
+    }
+
+    /// <summary>Последняя неудача подключения -- показывается в строке состояния.</summary>
+    private string? _lastBleError;
 
     // ================================================================ запуск
 
@@ -497,10 +596,19 @@ public partial class MainWindow : Window
         var errors = task.Result;
 
         if (errors.Count == 0)
+        {
+            _lastBleError = null;
             AppendLog(_localBle.StatusText);
+        }
         else
+        {
+            // Ошибку запоминаем: она показывается в строке состояния, пока
+            // связь не восстановится.
+            _lastBleError = string.Join("; ", errors);
+
             foreach (string error in errors)
                 AppendLog($"Bluetooth: {error}");
+        }
     }
 
     /// <summary>Статус Bluetooth-устройств для строки состояния.</summary>
@@ -1358,7 +1466,16 @@ public partial class MainWindow : Window
                 foreach (var device in response.Devices)
                     text.AppendLine($"  {(device.Connected ? "✔" : "✘")} {device.Name} — {device.Status}");
 
-            AppendLog(text.ToString().TrimEnd());
+            // Сообщение выводится только при изменении состава устройств.
+            // Иначе оно повторялось при каждой проверке состояния -- каждые
+            // несколько секунд, -- и журнал превращался в одну и ту же строку.
+            string summary = text.ToString().TrimEnd();
+
+            if (summary != _lastServiceDevices)
+            {
+                _lastServiceDevices = summary;
+                AppendLog(summary);
+            }
         }
 
         if (showDialog)
@@ -1635,6 +1752,29 @@ public partial class MainWindow : Window
 
     private void AppendLog(string text)
     {
+        // Повторяющиеся подряд сообщения не пишутся дважды.
+        //
+        // Причина: часть сообщений выводится периодически при проверке
+        // состояния. Когда ничего не меняется, журнал заполнялся одной и той
+        // же строкой каждые несколько секунд, и в нём не было видно главного.
+        if (text == _lastLogText)
+        {
+            _repeatedLogCount++;
+            return;
+        }
+
+        // Переход к новому сообщению: дописываем счётчик к прошлому.
+        if (_repeatedLogCount > 0)
+        {
+            LogBox.AppendText(
+                $"[{DateTime.Now:HH:mm:ss}]   ... то же сообщение ещё {_repeatedLogCount} раз" +
+                Environment.NewLine);
+
+            _repeatedLogCount = 0;
+        }
+
+        _lastLogText = text;
+
         string line = $"[{DateTime.Now:HH:mm:ss}] {text}";
 
         // Журнал ограничен по длине: иначе он растёт бесконечно и начинает
@@ -1647,6 +1787,15 @@ public partial class MainWindow : Window
         LogBox.AppendText(line + Environment.NewLine);
         LogBox.ScrollToEnd();
     }
+
+    /// <summary>Последнее выведенное сообщение -- для защиты от повторов.</summary>
+    private string? _lastLogText;
+
+    /// <summary>Сколько раз подряд повторилось последнее сообщение.</summary>
+    private int _repeatedLogCount;
+
+    /// <summary>Последний состав устройств службы -- чтобы не писать одно и то же.</summary>
+    private string? _lastServiceDevices;
 
     private void RefreshStatus()
     {
@@ -1666,12 +1815,23 @@ public partial class MainWindow : Window
         // показывается отдельно от состояния службы. Подключение может
         // идти до тридцати секунд, поэтому оно видно в строке состояния:
         // без этого ожидание выглядит как зависание.
+        //
+        // Ошибка показывается вместо бесконечного «подключение...»: раньше
+        // при неудаче надпись оставалась навсегда, и причина была непонятна.
         if (_localBle.IsBusy)
-            StatusBle.Text = "Bluetooth: подключение...";
+        {
+            StatusBle.Text = _lastBleError == null
+                ? "Bluetooth: подключение..."
+                : "Bluetooth: нет связи";
+        }
         else if (_localBle.ConnectedCount > 0)
+        {
             StatusBle.Text = $"Bluetooth: {_localBle.ConnectedCount}";
+        }
         else
-            StatusBle.Text = "Bluetooth: —";
+        {
+            StatusBle.Text = _lastBleError == null ? "Bluetooth: —" : "Bluetooth: нет связи";
+        }
 
         if (running && _currentSource?.LastError is { } error)
         {

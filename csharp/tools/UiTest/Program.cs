@@ -38,7 +38,13 @@ internal static class Program
         {
             // Конфигурацию задаём свою, чтобы проверка не зависела от того,
             // что лежит рядом с утилитой.
-            ConfigStore.DataDirectory = Path.Combine(Path.GetTempPath(), "opentuya-uitest");
+            //
+            // Каталог берём рядом с проверкой, а не в %TEMP%: временный
+            // каталог может быть создан другой учётной записью (например,
+            // после запуска с правами администратора), и тогда запись в него
+            // запрещена. Ошибка выглядела как UnauthorizedAccessException при
+            // создании каталога.
+            ConfigStore.DataDirectory = Path.Combine(AppContext.BaseDirectory, "ui_test_data");
             Directory.CreateDirectory(ConfigStore.DataDirectory);
 
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };

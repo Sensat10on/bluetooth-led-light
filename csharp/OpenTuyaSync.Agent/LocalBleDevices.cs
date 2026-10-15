@@ -209,6 +209,16 @@ public sealed class LocalBleDevices : IDisposable
     }
 
     /// <summary>
+    /// Сообщение о неудаче подключения для интерфейса.
+    ///
+    /// Нужно потому, что при ручной команде подключение идёт в фоне, и без
+    /// этого сообщения пользователь видит только «Bluetooth: подключение...»
+    /// без конца: непонятно ни что случилось, ни что делать. Именно так и
+    /// произошло, когда лента была занята телефоном.
+    /// </summary>
+    public event Action<string>? ConnectFailed;
+
+    /// <summary>
     /// Отправляет цвет и, если ленты в списке нет, сперва подключает её.
     ///
     /// Нужно для ручного управления. Подключение запускается в фоне и
@@ -249,13 +259,36 @@ public sealed class LocalBleDevices : IDisposable
     {
         try
         {
-            Connect(config);
-            ApplyColor(color);
+            var errors = Connect(config);
+
+            if (_providers.Count > 0)
+            {
+                ApplyColor(color);
+                return;
+            }
+
+            ReportConnectFailure(errors);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Ошибку подключения уже записал Connect через список ошибок.
+            ReportConnectFailure(new List<string> { ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Сообщает интерфейсу, что подключиться не удалось.
+    ///
+    /// Ошибки от устройств перечисляются как есть: в них написана причина --
+    /// чаще всего «лента занята телефоном».
+    /// </summary>
+    private void ReportConnectFailure(List<string> errors)
+    {
+        string message = errors.Count > 0
+            ? string.Join("; ", errors)
+            : "Не удалось подключиться: устройство не отвечает";
+
+        try { ConnectFailed?.Invoke(message); }
+        catch (Exception) { }
     }
 
     public void TurnOn()
@@ -317,24 +350,31 @@ public sealed class LocalBleDevices : IDisposable
     {
         try
         {
-            Connect(config);
+            var errors = Connect(config);
 
-            lock (_sync)
+            if (_providers.Count > 0)
             {
-                foreach (var provider in _providers.Values)
+                lock (_sync)
                 {
-                    try
+                    foreach (var provider in _providers.Values)
                     {
-                        if (on) provider.TurnOn();
-                        else provider.TurnOff();
+                        try
+                        {
+                            if (on) provider.TurnOn();
+                            else provider.TurnOff();
+                        }
+                        catch (Exception) { }
                     }
-                    catch (Exception) { }
                 }
+
+                return;
             }
+
+            ReportConnectFailure(errors);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Ошибку подключения уже записал Connect.
+            ReportConnectFailure(new List<string> { ex.Message });
         }
     }
 
