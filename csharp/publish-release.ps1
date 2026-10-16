@@ -46,6 +46,19 @@ if (-not $Version) {
         $tag = & git -C $root describe --tags --abbrev=0 2>$null
         if ($LASTEXITCODE -eq 0 -and $tag) {
             $Version = ($tag -replace '^v', '').Trim()
+
+            # Если после тега уже есть коммиты, сборка не соответствует
+            # релизу: имя получает пометку, чтобы её нельзя было спутать с
+            # выпущенным архивом.
+            #
+            # Так и случилось однажды: локальный архив остался с именем
+            # прошлой версии, и было непонятно, что в нём.
+            & git -C $root diff --quiet $tag -- . 2>$null
+
+            if ($LASTEXITCODE -ne 0) {
+                $Version = "$Version-dev"
+                Write-Host 'После последнего тега есть изменения: сборка помечена как dev' -ForegroundColor Yellow
+            }
         }
     }
     catch {
