@@ -318,8 +318,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать справ�
 # ---------------------------------------------------- архив
 Write-Step 'Упаковка архива'
 
+# Старые архивы убираем: имя содержит версию, и без этого в папке копились
+# бы архивы прошлых сборок. Заодно не остаётся файл с прежним именем, если
+# тег появился уже после сборки.
+Get-ChildItem $release -Filter 'OpenTuyaSync-v*.zip' -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
 $zip = Join-Path $release "OpenTuyaSync-v$Version.zip"
-Remove-Item $zip -Force -ErrorAction SilentlyContinue
 
 Compress-Archive -Path (Join-Path $release '*') -DestinationPath $zip -CompressionLevel Optimal
 
