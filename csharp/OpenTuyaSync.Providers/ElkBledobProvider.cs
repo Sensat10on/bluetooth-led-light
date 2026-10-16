@@ -53,6 +53,13 @@ public sealed class ElkBledobProvider : IColorProvider
     private volatile bool _stopRequested;
     private volatile bool _connected;
 
+    /// <summary>
+    /// Таблица служб GATT уже прочитана у этого провайдера. Пока это так,
+    /// повторные попытки берут кэш Windows и не занимают эфир лишним
+    /// обходом таблицы.
+    /// </summary>
+    private bool _gattCacheWarm;
+
     private Rgb? _pendingColor;
     private bool _pendingOn, _pendingOff;
 
@@ -221,6 +228,15 @@ public sealed class ElkBledobProvider : IColorProvider
     {
         ulong address = ParseMac(_mac);
 
+        // Режим перечисления служб. Свежий список нужен только на первой
+        // попытке: он требует полного обхода таблицы GATT по радио, а это
+        // заметный трафик в эфире. Повторные попытки берут готовый кэш
+        // Windows: он уже проверен, и лишний обход только занимает эфир,
+        // мешая другим Bluetooth-устройствам поблизости.
+        BluetoothCacheMode GattCacheModeFor(int attempt) =>
+            attempt == 0 || !_gattCacheWarm
+                ? BluetoothCacheMode.Uncached
+                : BluetoothCacheMode.Cached;
         // Службы у недорогих BLE-устройств перечисляются нестабильно: то
         // видна вся таблица, то только стандартная служба с именем. Причина
         // в том, что лента отключает радио, когда с ней никто не работает,
@@ -255,7 +271,8 @@ public sealed class ElkBledobProvider : IColorProvider
                     catch (Exception) { }
                 };
 
-                var services = await _device.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+                var services = await _device.GetGattServicesAsync(
+                    GattCacheModeFor(attempt));
 
                 if (services.Status != GattCommunicationStatus.Success)
                 {
@@ -272,7 +289,8 @@ public sealed class ElkBledobProvider : IColorProvider
 
                 foreach (var service in services.Services)
                 {
-                    var characteristics = await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+                    var characteristics = await service.GetCharacteristicsAsync(
+                        GattCacheModeFor(attempt));
 
                     // Отказ в доступе к характеристикам службы -- признак
                     // залипшего кэша GATT в Windows. Связь при этом
@@ -333,6 +351,7 @@ public sealed class ElkBledobProvider : IColorProvider
                 if (found != null)
                 {
                     _characteristic = found;
+                    _gattCacheWarm = true;
                     return;
                 }
 

@@ -59,6 +59,51 @@ public sealed class LocalBleDevices : IDisposable
     /// </summary>
     public bool IsBusy => _connecting;
 
+    /// <summary>
+    /// Сколько неудачных подключений подряд делается, прежде чем на время
+    /// прекратить попытки.
+    ///
+    /// Зачем пауза. Когда лента занята телефоном, каждая попытка подключения
+    /// поднимает трафик в эфире: поиск устройства, установление связи,
+    /// запрос списка служб и характеристик. Если повторять это без конца,
+    /// радио компьютера работает непрерывно, и рядом стоящие Bluetooth-
+    /// устройства теряют связь -- так пропадал пульт приставки Xiaomi,
+    /// которая стоит в метре от компьютера. Пауза нужна, чтобы эфир
+    /// освобождался.
+    /// </summary>
+    private const int FailuresBeforePause = 3;
+
+    /// <summary>Сколько ждать после серии неудач.</summary>
+    private static readonly TimeSpan FailurePause = TimeSpan.FromMinutes(2);
+
+    private int _consecutiveFailures;
+    private DateTime _pauseUntil = DateTime.MinValue;
+
+    /// <summary>
+    /// Идёт ли сейчас пауза после серии неудач.
+    /// </summary>
+    public bool IsPaused => DateTime.UtcNow < _pauseUntil;
+
+    /// <summary>
+    /// Сколько секунд осталось до конца паузы.
+    /// </summary>
+    public int PauseSecondsLeft => IsPaused
+        ? (int)Math.Ceiling((_pauseUntil - DateTime.UtcNow).TotalSeconds)
+        : 0;
+
+    /// <summary>
+    /// Разрешает попытки немедленно -- для кнопки «Переподключить».
+    ///
+    /// Пользователь мог устранить причину (закрыть приложение ленты на
+    /// телефоне) и не должен ждать конца паузы.
+    /// </summary>
+    public void ResetFailurePause()
+    {
+        _pauseUntil = DateTime.MinValue;
+        _consecutiveFailures = 0;
+        ConnectFailed?.Invoke("Попытки подключения возобновлены вручную.");
+    }
+
     private volatile bool _connecting;
 
     /// <summary>
@@ -76,6 +121,23 @@ public sealed class LocalBleDevices : IDisposable
     {
         var errors = new List<string>();
         int generation = Interlocked.Increment(ref _generation);
+
+        // Пауза после серии неудач: эфир должен освободиться.
+        //
+        // Проверка идёт до всего остального, потому что смысл паузы --
+        // не поднимать трафик вообще. Без неё программа долбила подключение
+        // по кругу, пока лента занята телефоном, и радио компьютера работало
+        // непрерывно: от этого терял связь пульт приставки, стоящей рядом.
+        if (IsPaused)
+        {
+            errors.Add(
+                $"{config.Devices.Count(d => d.Enabled && d.Type == DeviceKind.ElkBledob)} " +
+                $"устройств(о) не подключено: пауза после {_consecutiveFailures} неудачных попыток, " +
+                $"осталось {PauseSecondsLeft} с. Причина обычно в том, что лента занята телефоном.");
+
+            return errors;
+        }
+
         Volatile.Write(ref _pending, generation);
         _connecting = true;
 
@@ -195,6 +257,36 @@ public sealed class LocalBleDevices : IDisposable
                 Volatile.Write(ref _pending, 0);
 
             _connecting = false;
+
+            // Считаем неудачи, чтобы после серии прекратить попытки на время
+            // и дать эфиру освободиться: непрерывные попытки подключения
+            // мешают другим Bluetooth-устройствам рядом.
+            bool anyConnected;
+            lock (_sync) anyConnected = _providers.Count > 0;
+
+            if (anyConnected)
+            {
+                _consecutiveFailures = 0;
+                _pauseUntil = DateTime.MinValue;
+            }
+            else
+            {
+                _consecutiveFailures++;
+
+                if (_consecutiveFailures >= FailuresBeforePause)
+                {
+                    _pauseUntil = DateTime.UtcNow + FailurePause;
+
+                    errors.Add(
+                        $"Подключение не удалось {_consecutiveFailures} раз подряд. " +
+                        $"Попытки приостановлены на {FailurePause.TotalMinutes:0} мин, чтобы " +
+                        "не занимать эфир: непрерывные попытки мешают другим " +
+                        "Bluetooth-устройствам рядом. Нажмите «Переподключить устройства», " +
+                        "чтобы попробовать сразу.");
+
+                    _consecutiveFailures = 0;
+                }
+            }
         }
 
         return errors;

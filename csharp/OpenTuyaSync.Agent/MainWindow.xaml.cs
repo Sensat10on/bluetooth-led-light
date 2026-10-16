@@ -661,6 +661,14 @@ public partial class MainWindow : Window
         _reconnecting = true;
         AppendLog("Переподключение устройств...");
 
+        // Ручное действие снимает паузу после неудач: пользователь мог
+        // устранить причину (освободить ленту) и не должен ждать.
+        if (_localBle.IsPaused)
+        {
+            AppendLog("Пауза после неудачных попыток снята: переподключение запущено вручную.");
+            _localBle.ResetFailurePause();
+        }
+
         var response = _service.SendCommand(new IpcMessage { Type = MessageType.ConnectDevices });
         AppendLog(response.Text ?? "Готово.");
 
@@ -1841,7 +1849,15 @@ public partial class MainWindow : Window
         //
         // Ошибка показывается вместо бесконечного «подключение...»: раньше
         // при неудаче надпись оставалась навсегда, и причина была непонятна.
-        if (_localBle.IsBusy)
+        //
+        // Пауза показывается отдельно: она означает, что попытки прекращены
+        // намеренно, чтобы не занимать эфир и не мешать другим
+        // Bluetooth-устройствам поблизости.
+        if (_localBle.IsPaused)
+        {
+            StatusBle.Text = $"Bluetooth: пауза {_localBle.PauseSecondsLeft} с";
+        }
+        else if (_localBle.IsBusy)
         {
             StatusBle.Text = _lastBleError == null
                 ? "Bluetooth: подключение..."
