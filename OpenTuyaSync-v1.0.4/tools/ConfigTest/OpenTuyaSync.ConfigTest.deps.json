@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "OpenTuyaSync.ConfigTest/1.0.0": {
+        "dependencies": {
+          "OpenTuyaSync.Core": "1.0.0"
+        },
+        "runtime": {
+          "OpenTuyaSync.ConfigTest.dll": {}
+        }
+      },
+      "OpenTuyaSync.Core/1.0.0": {
+        "runtime": {
+          "OpenTuyaSync.Core.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "OpenTuyaSync.ConfigTest/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "OpenTuyaSync.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

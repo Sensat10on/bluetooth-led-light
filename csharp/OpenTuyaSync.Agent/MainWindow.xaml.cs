@@ -78,6 +78,21 @@ public partial class MainWindow : Window
 
             // Первая неудача ещё не повод перезапускать адаптер: лента могла
             // просто уйти в сон, и повторное подключение обычно срабатывает.
+            //
+            // Перезапуск адаптера разрывает ВСЕ Bluetooth-соединения
+            // компьютера, поэтому выполняется только с разрешения в
+            // настройках. По умолчанию разрешение выключено: именно частые
+            // перезапуски отключали Bluetooth-пульт приставки Xiaomi от неё.
+            if (!_config.AllowBluetoothRecovery)
+            {
+                AppendLog(
+                    "Bluetooth: подключиться не удалось. Перезапуск адаптера выключен в " +
+                    "настройках («Разрешать перезапуск Bluetooth»): он разрывает связь с " +
+                    "другими Bluetooth-устройствами. Освободите ленту и повторите.");
+
+                return;
+            }
+
             if (DateTime.UtcNow - _lastBluetoothRecovery < RecoveryCooldown)
             {
                 AppendLog("Bluetooth: повторное подключение не помогло, " +
@@ -94,8 +109,14 @@ public partial class MainWindow : Window
         }));
     }
 
-    /// <summary>Как часто разрешено автоматически перезапускать адаптер.</summary>
-    private static readonly TimeSpan RecoveryCooldown = TimeSpan.FromMinutes(2);
+    /// <summary>
+    /// Как часто разрешено автоматически перезапускать адаптер.
+    ///
+    /// Срок согласован с ограничением в провайдере ленты: перезапуск рвёт
+    /// связь со всеми Bluetooth-устройствами компьютера, поэтому десять
+    /// минут -- разумный минимум.
+    /// </summary>
+    private static readonly TimeSpan RecoveryCooldown = TimeSpan.FromMinutes(10);
 
     private DateTime _lastBluetoothRecovery = DateTime.MinValue;
 
@@ -315,6 +336,7 @@ public partial class MainWindow : Window
             StartMinimizedBox.IsChecked = _config.StartMinimized;
             AutoStartCaptureBox.IsChecked = _config.AutoStartCapture;
             RestoreSceneBox.IsChecked = _config.RestoreSceneOnExit;
+            AllowBluetoothRecoveryBox.IsChecked = _config.AllowBluetoothRecovery;
 
             RefreshHotkeyBoxes();
             ReloadDeviceList();
@@ -1715,6 +1737,7 @@ public partial class MainWindow : Window
         _config.StartMinimized = StartMinimizedBox.IsChecked == true;
         _config.AutoStartCapture = AutoStartCaptureBox.IsChecked == true;
         _config.RestoreSceneOnExit = RestoreSceneBox.IsChecked == true;
+        _config.AllowBluetoothRecovery = AllowBluetoothRecoveryBox.IsChecked == true;
 
         SaveConfig();
 

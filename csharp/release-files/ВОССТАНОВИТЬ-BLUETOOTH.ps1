@@ -1,4 +1,4 @@
-﻿<#
+<#
     Перезапуск Bluetooth-адаптера.
 
     Зачем: Windows иногда «залипает» на устройстве и отвечает «отказ в
@@ -51,6 +51,14 @@ if (-not (Test-Admin)) {
 }
 
 Write-Host '=== Перезапуск Bluetooth-адаптера ===' -ForegroundColor Cyan
+Write-Host ''
+Write-Host 'ВНИМАНИЕ: на время перезапуска отключатся ВСЕ Bluetooth-устройства' -ForegroundColor Yellow
+Write-Host 'компьютера: мышь, клавиатура, наушники. Могут отключиться и пульты' -ForegroundColor Yellow
+Write-Host 'других устройств, например Bluetooth-пульт приставки Xiaomi:' -ForegroundColor Yellow
+Write-Host 'приставка теряет пульт, когда компьютер перезапускает своё радио.' -ForegroundColor Yellow
+Write-Host ''
+Write-Host 'Если лента просто занята телефоном, этот сценарий не нужен:' -ForegroundColor Yellow
+Write-Host 'освободите ленту и нажмите «Переподключить устройства» в приложении.' -ForegroundColor Yellow
 Write-Host ''
 
 # Адаптеры -- это устройства класса Bluetooth с типом Radio.

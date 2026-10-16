@@ -85,12 +85,28 @@ Check("верхний предел яркости сохранился", limitsA
     ref failures, limitsAfter.Screen.BrightnessLimitMax.ToString());
 Check("автозапуск подсветки сохранился", limitsAfter.AutoStartCapture, ref failures);
 
-// --- 5. Формат файла: имена полей в snake_case ---
+// --- 5. Перезапуск Bluetooth по умолчанию выключен ---
+//
+// Проверка обязательна: перезапуск радио разрывает ВСЕ Bluetooth-соединения
+// компьютера. Однажды он стоял включённым по умолчанию, и это отключало
+// Bluetooth-пульт приставки Xiaomi от самой приставки.
+var recovery = ConfigStore.Load();
+Check("перезапуск Bluetooth выключен по умолчанию", !recovery.AllowBluetoothRecovery,
+    ref failures, recovery.AllowBluetoothRecovery.ToString());
+
+recovery.AllowBluetoothRecovery = true;
+ConfigStore.Save(recovery);
+Check("разрешение перезапуска Bluetooth сохраняется",
+    ConfigStore.Load().AllowBluetoothRecovery, ref failures);
+
+// --- 6. Формат файла: имена полей в snake_case ---
 string json = File.ReadAllText(ConfigStore.ConfigPath);
 Check("в файле snake_case", json.Contains("brightness_scale"), ref failures);
 Check("значение яркости в файле", json.Contains("0.8"), ref failures);
+Check("поле перезапуска Bluetooth в файле",
+    json.Contains("allow_bluetooth_recovery"), ref failures);
 
-// --- 6. Повреждённый файл не мешает запуску ---
+// --- 7. Повреждённый файл не мешает запуску ---
 File.WriteAllText(ConfigStore.ConfigPath, "{ это не json");
 var recovered = ConfigStore.Load();
 Check("повреждённый файл восстанавливается", recovered != null, ref failures);

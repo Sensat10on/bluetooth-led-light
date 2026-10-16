@@ -79,6 +79,22 @@ Start-Sleep -Seconds 3
 
 # ---------------------------------------------------- очистка
 Write-Step 'Очистка папки релиза'
+
+# Настройки сохраняем ДО очистки.
+#
+# config.json папки релиза -- это рабочие настройки пользователя: список
+# устройств, ключи доступа, параметры захвата. Папка очищается целиком,
+# поэтому файл на время сборки убирается в сторону и возвращается обратно.
+# Без этого каждая пересборка стирала настройки, и всё приходилось
+# указывать заново.
+$configPath = Join-Path $release 'config.json'
+$savedConfig = $null
+
+if (Test-Path $configPath) {
+    $savedConfig = Get-Content $configPath -Raw -Encoding UTF8
+    Write-Host '  настройки сохранены на время сборки'
+}
+
 if (Test-Path $release) { Remove-Item $release -Recurse -Force }
 
 New-Item -ItemType Directory -Path $release -Force | Out-Null
@@ -261,27 +277,36 @@ foreach ($pattern in (Join-Path $files 'config.json'),
     }
 }
 
-# Настройки по умолчанию.
+# Настройки: возвращаем сохранённые либо создаём пустые.
 #
 # config.json намеренно не хранится в репозитории: в нём лежат
-# идентификаторы устройств и ключи доступа. Локально файл есть, а на сервере
-# сборки его нет, поэтому для релиза создаётся пустой набор настроек --
-# пользователь заполняет его через вкладку «Настройки», а недостающие поля
-# приложение дополняет значениями по умолчанию.
-$configPath = Join-Path $release 'config.json'
-
-if (-not (Test-Path $configPath)) {
+# идентификаторы устройств и ключи доступа. Поэтому:
+#   - локально возвращаются настройки пользователя, снятые до очистки;
+#   - на сервере сборки файла нет, и создаётся пустой набор -- пользователь
+#     заполняет его через вкладку «Настройки», а недостающие поля приложение
+#     дополняет значениями по умолчанию.
+if ($savedConfig) {
+    # Запись без метки порядка байтов: метка не нужна и мешает некоторым
+    # библиотекам читать файл.
+    [System.IO.File]::WriteAllText($configPath, $savedConfig, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host '  настройки возвращены на место'
+}
+elseif (-not (Test-Path $configPath)) {
     $config = [ordered]@{
-        devices               = @()
-        auto_start            = $false
-        start_minimized       = $false
-        restore_scene_on_exit = $false
-        active_source         = 'screen'
-        auto_start_capture    = $false
+        devices                  = @()
+        auto_start               = $false
+        start_minimized          = $false
+        restore_scene_on_exit    = $false
+        active_source            = 'screen'
+        auto_start_capture       = $false
+
+        # Перезапуск Bluetooth-адаптера выключен: он разрывает связь со всеми
+        # Bluetooth-устройствами компьютера, включая пульты других устройств.
+        allow_bluetooth_recovery = $false
     }
 
-    $config | ConvertTo-Json -Depth 5 |
-        Set-Content $configPath -Encoding UTF8
+    $json = $config | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($configPath, $json, (New-Object System.Text.UTF8Encoding($false)))
 
     Write-Host '  создан пустой config.json'
 }

@@ -103,6 +103,40 @@ public sealed class ElkBledobProvider : IColorProvider
     /// происходит здесь, в фоновом потоке вызывающего.
     /// </summary>
     /// <summary>
+    /// Сколько ждать между перезапусками Bluetooth-радио.
+    ///
+    /// Ограничение обязательно, и оно общее для всего процесса. Перезапуск
+    /// радио разрывает ВСЕ Bluetooth-соединения компьютера, поэтому частые
+    /// перезапуски превращаются в постоянные отключения чужих устройств:
+    /// именно из-за них пропадал Bluetooth-пульт приставки Xiaomi. Прежде чем
+    /// трогать радио, программа выжидает этот срок.
+    /// </summary>
+    private static readonly TimeSpan RadioRestartCooldown = TimeSpan.FromMinutes(10);
+
+    /// <summary>Когда радио перезапускалось в последний раз.</summary>
+    private static DateTime _lastRadioRestart = DateTime.MinValue;
+
+    private static readonly object RadioLock = new();
+
+    /// <summary>Сколько раз перезапуск радио уже пропущен из-за ограничения.</summary>
+    public static int SkippedRadioRestarts { get; private set; }
+
+    /// <summary>
+    /// Можно ли сейчас перезапустить радио: с прошлого раза прошёл срок.
+    ///
+    /// Проверка отделена от перезапуска, потому что решение принимается до
+    /// тяжёлой операции: бессмысленно пробовать, если программа только что
+    /// это делала.
+    /// </summary>
+    public static bool CanRestartRadio()
+    {
+        lock (RadioLock)
+        {
+            return DateTime.UtcNow - _lastRadioRestart >= RadioRestartCooldown;
+        }
+    }
+
+    /// <summary>
     /// Программное выключение и включение Bluetooth. Нужно для лечения
     /// залипшего кэша GATT: Windows начинает отказывать в доступе к
     /// производительной службе устройства, и перезапуск радио это
@@ -111,9 +145,25 @@ public sealed class ElkBledobProvider : IColorProvider
     /// Возвращает true, если удалось. Управление радио может требовать
     /// повышенных прав -- тогда метод вернёт false, и пользователю
     /// останется сделать это вручную.
+    ///
+    /// Радио трогается только при явном разрешении вызывающей стороны: см.
+    /// <see cref="AllowBluetoothRecovery"/> в настройках.
     /// </summary>
     public static async Task<bool> RestartBluetoothRadioAsync()
     {
+        lock (RadioLock)
+        {
+            // Ограничение частоты: иначе каждое неудачное подключение рвало
+            // бы Bluetooth у всех остальных устройств.
+            if (DateTime.UtcNow - _lastRadioRestart < RadioRestartCooldown)
+            {
+                SkippedRadioRestarts++;
+                return false;
+            }
+
+            _lastRadioRestart = DateTime.UtcNow;
+        }
+
         try
         {
             var radios = await Windows.Devices.Radios.Radio.GetRadiosAsync();
@@ -151,11 +201,20 @@ public sealed class ElkBledobProvider : IColorProvider
     /// <summary>
     /// Перезапускает Bluetooth и пытается подключиться заново. Вызывается,
     /// когда Windows отказала в доступе к службе устройства.
+    ///
+    /// Возвращает true, если перезапуск действительно выполнялся: при
+    /// ограничении частоты метод сразу возвращает false, и вызывающая
+    /// сторона не должна считать, что попытка была.
     /// </summary>
-    public void ConnectWithRadioRestart()
+    public bool ConnectWithRadioRestart()
     {
-        RestartBluetoothRadioAsync().GetAwaiter().GetResult();
+        if (!CanRestartRadio()) return false;
+
+        bool restarted = RestartBluetoothRadioAsync().GetAwaiter().GetResult();
+        if (!restarted) return false;
+
         Connect();
+        return true;
     }
 
     private async Task ConnectAsync()

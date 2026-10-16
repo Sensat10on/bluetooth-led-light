@@ -101,16 +101,67 @@ public sealed class LocalBleDevices : IDisposable
                     catch (Exception ex) when (LooksLikeStickyCache(ex))
                     {
                         // Windows отказал в доступе к службе устройства --
-                        // признак залипшего кэша GATT. Перезапускаем
-                        // Bluetooth и пробуем ещё раз: вручную это делается
-                        // через параметры Windows, но приложение может
-                        // сделать это само.
+                        // признак залипшего кэша GATT. Помогает перезапуск
+                        // Bluetooth, но он разрывает ВСЕ Bluetooth-соединения
+                        // компьютера: мышь, наушники и пульты других устройств.
+                        // Поэтому он выполняется только с разрешения в
+                        // настройках и не чаще раза в десять минут.
+                        if (!config.AllowBluetoothRecovery)
+                        {
+                            errors.Add(
+                                $"{device.Name}: {ex.Message} Перезапуск Bluetooth выключен " +
+                                "в настройках: он разрывает связь с другими Bluetooth-устройствами. " +
+                                "Освободите ленту (закройте приложение ленты на телефоне) и повторите.");
+
+                            try { provider.Dispose(); } catch (Exception) { }
+                            continue;
+                        }
+
+                        if (!ElkBledobProvider.CanRestartRadio())
+                        {
+                            errors.Add(
+                                $"{device.Name}: {ex.Message} Перезапуск Bluetooth недавно уже " +
+                                "выполнялся, повторю позже: частые перезапуски рвут связь с другими " +
+                                "Bluetooth-устройствами.");
+
+                            try { provider.Dispose(); } catch (Exception) { }
+                            continue;
+                        }
+
                         errors.Add($"{device.Name}: {ex.Message} Перезапускаю Bluetooth и пробую снова...");
 
                         try { provider.Dispose(); } catch (Exception) { }
 
                         var retry = new ElkBledobProvider(device);
-                        retry.ConnectWithRadioRestart();
+
+                        // Если перезапуск не состоялся (не хватило прав или
+                        // сработало ограничение частоты), оставляем попытку
+                        // подключения прежнему провайдеру: он ещё рабочий.
+                        if (!retry.ConnectWithRadioRestart())
+                        {
+                            errors.Add(
+                                $"{device.Name}: перезапуск Bluetooth не выполнен, " +
+                                "пробую подключиться без него.");
+
+                            try { retry.Dispose(); } catch (Exception) { }
+
+                            try { provider.Connect(); }
+                            catch (Exception retryError)
+                            {
+                                errors.Add($"{device.Name}: {retryError.Message}");
+                                try { provider.Dispose(); } catch (Exception) { }
+                                continue;
+                            }
+
+                            if (Generation != generation)
+                            {
+                                try { provider.Dispose(); } catch (Exception) { }
+                                break;
+                            }
+
+                            lock (_sync) _providers[device.Id] = provider;
+                            continue;
+                        }
 
                         if (Generation != generation)
                         {
