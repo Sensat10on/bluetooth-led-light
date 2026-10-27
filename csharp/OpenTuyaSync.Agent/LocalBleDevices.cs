@@ -114,10 +114,44 @@ public sealed class LocalBleDevices : IDisposable
     public int ConnectAsyncGeneration => Generation + 1;
 
     /// <summary>
+    /// Одновременно выполняется только одно подключение.
+    ///
+    /// Зачем. Подключение запускается из двух мест: кнопкой «Запустить» и
+    /// ручным цветом, если лента ещё не подключена. При быстром переключении
+    /// «ручной → автоматический» оба запуска шли одновременно: каждый снимал
+    /// устройства предыдущего запуска, и лента в итоге не подключалась ни к
+    /// одному из них. Внешне это выглядело как «не подключается».
+    /// </summary>
+    private readonly SemaphoreSlim _connectGate = new(1, 1);
+
+    /// <summary>
     /// Подключается ко всем включённым Bluetooth-устройствам из настроек.
     /// Ошибка одного устройства не мешает остальным.
     /// </summary>
     public List<string> Connect(AppConfig config)
+    {
+        var errors = new List<string>();
+
+        // Ждём, пока завершится уже идущее подключение. Ограничение по
+        // времени обязательно: подключение к BLE-устройству занимает секунды,
+        // но бесконечно ждать нельзя.
+        if (!_connectGate.Wait(TimeSpan.FromSeconds(45)))
+        {
+            errors.Add("Подключение уже выполняется: повторный запрос пропущен.");
+            return errors;
+        }
+
+        try
+        {
+            return ConnectCore(config);
+        }
+        finally
+        {
+            _connectGate.Release();
+        }
+    }
+
+    private List<string> ConnectCore(AppConfig config)
     {
         var errors = new List<string>();
         int generation = Interlocked.Increment(ref _generation);

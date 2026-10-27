@@ -62,6 +62,25 @@ public sealed class ServiceClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Наблюдает исключение задачи, чтобы оно не всплыло в финализаторе.
+    ///
+    /// Нужно при обрыве незавершённого подключения: задача ConnectAsync
+    /// завершается ошибкой SocketException(995), и если её никто не
+    /// прочитает, сборщик мусора перевыбрасывает исключение из финализатора.
+    /// В журнале это выглядело как необработанное AggregateException при
+    /// каждом запуске приложения.
+    /// </summary>
+    private static void ObserveFault(Task task)
+    {
+        _ = task.ContinueWith(
+            completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted |
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
     /// <summary>Открывает соединение со службой или возвращает null.</summary>
     private TcpClient? TryConnect()
     {
@@ -78,7 +97,17 @@ public sealed class ServiceClient : IDisposable
 
             if (!connectTask.Wait(ConnectTimeoutMs))
             {
-                client.Dispose();
+                // Сначала забираем возможную ошибку задачи, затем закрываем
+                // клиент: закрытие обрывает попытку и тоже переводит задачу в
+                // состояние с ошибкой.
+                ObserveFault(connectTask);
+
+                try { client.Dispose(); } catch (Exception) { }
+
+                // Повторно наблюдаем на случай, если ошибка появилась после
+                // закрытия клиента.
+                ObserveFault(connectTask);
+
                 Log($"служба не ответила за {ConnectTimeoutMs} мс");
                 return null;
             }

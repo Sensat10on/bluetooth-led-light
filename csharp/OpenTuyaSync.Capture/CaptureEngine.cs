@@ -79,7 +79,20 @@ public sealed class CaptureEngine : IDisposable
 
         while (!_stopRequested)
         {
-            var color = _source?.TryGetColor();
+            Rgb? color = null;
+
+            try
+            {
+                color = _source?.TryGetColor();
+            }
+            catch (Exception)
+            {
+                // Источник может быть уже освобождён или устройство
+                // переключилось. Без этой защиты исключение из фонового
+                // потока завершает процесс: у оконного приложения нет
+                // консоли, и пользователь видит «программа вылетела».
+                color = null;
+            }
 
             if (color is { } c && sw.ElapsedMilliseconds >= nextSend)
             {
@@ -114,24 +127,56 @@ public sealed class CaptureEngine : IDisposable
         }
     }
 
-    public void Stop()
+    /// <summary>
+    /// Останавливает поток захвата.
+    ///
+    /// Возвращает true, если поток завершился и источник можно освобождать.
+    ///
+    /// Если поток не успел выйти за отведённое время, источник НЕ трогается:
+    /// он ещё используется внутри нативного вызова обращения к экрану.
+    /// Освобождение в этот момент -- верный способ уронить процесс в
+    /// неуправляемом коде, без записи в журнал сбоев. Именно это и
+    /// происходило при переключении с ручного управления на автоматический
+    /// режим: старый захват останавливался, а его источник освобождался, пока
+    /// поток ещё читал экран.
+    /// </summary>
+    public bool Stop()
     {
         _stopRequested = true;
 
-        if (_thread is { IsAlive: true })
+        Thread? thread = _thread;
+
+        if (thread is { IsAlive: true })
         {
-            _thread.Join(TimeSpan.FromMilliseconds(600));
+            bool joined = thread.Join(TimeSpan.FromSeconds(3));
+
+            if (!joined)
+            {
+                // Поток занят нативным вызовом. Не трогаем ни его, ни
+                // источник: он завершится сам, когда вызов вернётся.
+                return false;
+            }
+
             _thread = null;
         }
 
         _source?.Stop();
         _source = null;
         ActiveSource = null;
+
+        return true;
     }
 
     public void Dispose()
     {
-        Stop();
+        if (!Stop())
+        {
+            // Источник оставлен живым намеренно: поток всё ещё им
+            // пользуется. Память освободит сборщик мусора вместе с
+            // завершившимся потоком.
+            return;
+        }
+
         _source?.Dispose();
         _source = null;
     }

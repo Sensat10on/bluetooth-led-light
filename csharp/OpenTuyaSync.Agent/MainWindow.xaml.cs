@@ -226,7 +226,14 @@ public partial class MainWindow : Window
     {
         try
         {
-            _engine?.Stop();
+            // Движок владеет источником и освобождает его сам -- так же, как
+            // при обычной остановке. Освобождать источник здесь отдельно
+            // нельзя: поток захвата может ещё работать.
+            var engine = _engine;
+            _engine = null;
+            engine?.Dispose();
+            _currentSource = null;
+
             _hotkeys?.Dispose();
 
             if (_config.RestoreSceneOnExit)
@@ -566,14 +573,27 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_engine != null)
+            // Движок владеет источником и освобождает его сам -- только когда
+            // поток захвата действительно остановился.
+            //
+            // Раньше источник освобождался здесь безусловно, сразу после
+            // остановки движка. При переключении с ручного управления на
+            // автоматический поток захвата не успевал выйти за отведённое
+            // время, и обращение к уже освобождённому устройству роняло
+            // процесс в нативном коде.
+            var engine = _engine;
+            _engine = null;
+
+            if (engine != null)
             {
-                _engine.Stop();
-                _engine.Dispose();
-                _engine = null;
+                engine.Dispose();
+            }
+            else
+            {
+                // Движка нет -- источник никем не используется.
+                _currentSource?.Dispose();
             }
 
-            _currentSource?.Dispose();
             _currentSource = null;
 
             // Bluetooth-ленты обслуживает приложение: при остановке
