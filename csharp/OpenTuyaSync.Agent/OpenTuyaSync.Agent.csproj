@@ -47,4 +47,14 @@
     <ProjectReference Include="..\OpenTuyaSync.Providers\OpenTuyaSync.Providers.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Управление службой через API Windows вместо разбора вывода sc.exe.
+         Причина: sc.exe печатает названия полей на языке системы
+         («СОСТОЯНИЕ» вместо «STATE»), и разбор текста молча не находил
+         состояние службы. Внешне это выглядело как «службу запустить не
+         удалось: код 1056» при уже работающей службе.
+         Эта библиотека и так входит в релиз: её использует служба. -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+  </ItemGroup>
+
 </Project>

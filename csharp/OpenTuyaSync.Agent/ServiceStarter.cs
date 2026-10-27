@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using System.ComponentModel;
+using System.ServiceProcess;
 
 namespace OpenTuyaSync.Agent;
 
@@ -14,18 +15,23 @@ namespace OpenTuyaSync.Agent;
 ///   - приложение запускает её при старте, без запроса прав администратора.
 ///
 /// Второе возможно потому, что при установке службе выдаётся разрешение на
-/// запуск интерактивным пользователям. Иначе при входе в систему каждый раз
-/// появлялся бы запрос повышенных прав.
+/// запуск интерактивным пользователям.
 ///
-/// Работа идёт через sc.exe, как и остальные действия со службой: так не
-/// нужна дополнительная зависимость.
+/// Состояние службы читается через API Windows, а не разбором вывода sc.exe.
+/// Причина: sc.exe печатает названия полей на языке системы («СОСТОЯНИЕ»
+/// вместо «STATE»), из-за чего разбор текста не находил состояние и
+/// приложение пыталось запустить уже работающую службу. Windows отвечала
+/// «код 1056: служба уже запущена», и это показывалось как ошибка.
 /// </summary>
 public static class ServiceStarter
 {
     public const string ServiceName = "OpenTuyaSync";
 
     /// <summary>Сколько ждать перехода службы в состояние «работает».</summary>
-    private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>Сколько ждать остановки, если служба как раз останавливается.</summary>
+    private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Запускает службу, если она установлена и остановлена.
@@ -36,53 +42,65 @@ public static class ServiceStarter
     /// </summary>
     public static string EnsureRunning()
     {
+        ServiceController? service = null;
+
         try
         {
-            var (installed, state) = Query();
+            service = new ServiceController(ServiceName);
 
-            if (!installed)
-            {
-                return "Служба не установлена: сетевые устройства недоступны. " +
-                       "Установите её на вкладке «Настройки».";
-            }
+            // Обращение к Status у неустановленной службы бросает
+            // InvalidOperationException.
+            var status = service.Status;
 
-            if (state is "RUNNING")
+            if (status == ServiceControllerStatus.Running)
                 return "Служба уже работала.";
 
-            if (state is "START_PENDING")
-                return "Служба запускается.";
-
-            var (code, output) = Run($"start {ServiceName}");
-
-            if (code != 0)
+            if (status == ServiceControllerStatus.StartPending)
             {
-                return $"Службу запустить не удалось (код {code}): {FirstLine(output)}. " +
-                       "Запустите ПЕРЕЗАПУСК-СЛУЖБЫ.bat от имени администратора.";
+                service.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
+                return "Служба запущена.";
             }
 
-            // Ждём готовности: обращение к службе сразу после команды
-            // запуска ещё не пройдёт, и интерфейс показал бы «не запущена».
-            var deadline = DateTime.UtcNow + StartTimeout;
-
-            while (DateTime.UtcNow < deadline)
+            // Служба останавливается -- дождёмся остановки, иначе запуск
+            // сразу после неё не пройдёт.
+            if (status == ServiceControllerStatus.StopPending)
             {
-                Thread.Sleep(300);
-
-                var (_, current) = Query();
-
-                if (current is "RUNNING")
-                    return "Служба запущена приложением.";
-
-                if (current is "STOPPED")
-                    return "Служба запустилась и сразу остановилась. Смотрите журнал " +
-                           "событий Windows (источник OpenTuyaSync).";
+                try { service.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout); }
+                catch (System.ServiceProcess.TimeoutException) { }
             }
 
-            return "Служба запускается дольше обычного: проверьте состояние на вкладке «Настройки».";
+            service.Start();
+            service.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
+
+            return "Служба запущена приложением.";
+        }
+        catch (InvalidOperationException)
+        {
+            // Служба не установлена. Это допустимо: ленту обслуживает
+            // приложение, а сетевым устройствам нужна установка службы.
+            return "Служба не установлена: сетевые устройства недоступны. " +
+                   "Установите её на вкладке «Настройки».";
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1056)
+        {
+            // 1056: служба уже запущена. Значит её успел запустить кто-то
+            // ещё -- например, сама Windows сразу после установки. Это не
+            // ошибка.
+            return "Служба уже работала.";
+        }
+        catch (System.ServiceProcess.TimeoutException)
+        {
+            return "Служба запускается дольше обычного: проверьте состояние " +
+                   "на вкладке «Настройки».";
         }
         catch (Exception ex)
         {
-            return $"Службу запустить не удалось: {ex.Message}.";
+            return $"Службу запустить не удалось: {ex.Message}. " +
+                   "Запустите ПЕРЕЗАПУСК-СЛУЖБЫ.bat от имени администратора.";
+        }
+        finally
+        {
+            service?.Dispose();
         }
     }
 
@@ -106,79 +124,5 @@ public static class ServiceStarter
         }
 
         window.LogFromBackground(result);
-    }
-
-    /// <summary>
-    /// Спрашивает у системы, установлена ли служба и в каком она состоянии.
-    /// </summary>
-    private static (bool Installed, string State) Query()
-    {
-        var (_, output) = Run($"query {ServiceName}");
-
-        // Неустановленная служба даёт код 1060 и пустой разбор.
-        if (output.Contains("1060", StringComparison.Ordinal))
-            return (false, "");
-
-        // Строка состояния выглядит так:
-        //   STATE              : 4  RUNNING
-        foreach (string line in output.Split('\n'))
-        {
-            int index = line.IndexOf("STATE", StringComparison.OrdinalIgnoreCase);
-            if (index < 0) continue;
-
-            string rest = line[(index + "STATE".Length)..].Trim();
-
-            // Убираем двоеточие и код состояния, оставляя слово.
-            string[] parts = rest.Split(
-                new[] { ':', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (string part in parts)
-            {
-                if (part.Length > 2 && char.IsLetter(part[0]))
-                    return (true, part.ToUpperInvariant());
-            }
-        }
-
-        return (true, "");
-    }
-
-    private static (int Code, string Output) Run(string arguments)
-    {
-        try
-        {
-            var startInfo = new ProcessStartInfo("sc.exe", arguments)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-
-            using var process = Process.Start(startInfo);
-
-            if (process == null) return (1, "");
-
-            string output = process.StandardOutput.ReadToEnd() +
-                            process.StandardError.ReadToEnd();
-
-            process.WaitForExit(20000);
-
-            return (process.ExitCode, output);
-        }
-        catch (Exception ex)
-        {
-            return (1, ex.Message);
-        }
-    }
-
-    private static string FirstLine(string text)
-    {
-        foreach (string line in text.Split('\n'))
-        {
-            string trimmed = line.Trim();
-            if (trimmed.Length > 0) return trimmed;
-        }
-
-        return "без подробностей";
     }
 }
