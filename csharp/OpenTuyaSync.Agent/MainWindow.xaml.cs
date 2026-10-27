@@ -1781,6 +1781,31 @@ public partial class MainWindow : Window
             "О программе", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
+    /// <summary>
+    /// Пишет сообщение в журнал из фонового потока.
+    ///
+    /// Нужно для событий, которые происходят вне интерфейса (запуск службы
+    /// при старте приложения): обращаться к элементам окна можно только из
+    /// потока интерфейса, иначе приложение падает.
+    /// </summary>
+    public void LogFromBackground(string text)
+    {
+        try
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                AppendLog(text);
+
+                // Состояние службы изменилось -- обновляем строку состояния.
+                CheckServiceStatus();
+            }));
+        }
+        catch (Exception)
+        {
+            // Окно могло закрыться: журнал не критичен.
+        }
+    }
+
     private void AppendLog(string text)
     {
         // Повторяющиеся подряд сообщения не пишутся дважды.

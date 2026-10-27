@@ -25,6 +25,20 @@ public partial class App : Application
 
     private const string SingleInstanceName = "Global\\OpenTuyaSync.Agent.SingleInstance";
 
+    /// <summary>
+    /// Событие «покажи окно». Второй экземпляр выставляет его, первый
+    /// открывает окно и завершает ожидание.
+    ///
+    /// Это страховка на случай, когда значок в трее не виден: Windows 11
+    /// прячет значки новых программ в скрытую область, и тогда окно нечем
+    /// вернуть. Повторный запуск ярлыка теперь открывает работающее окно
+    /// вместо сообщения «уже запущено».
+    /// </summary>
+    private const string ShowWindowEventName = "Global\\OpenTuyaSync.Agent.ShowWindow";
+
+    private EventWaitHandle? _showWindowSignal;
+    private Thread? _showWindowThread;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -35,12 +49,19 @@ public partial class App : Application
 
         if (!isFirstInstance)
         {
-            MessageBox.Show(
-                "OpenTuya Sync уже запущен.\n\n" +
-                "Вторая копия не нужна: она мешает первой и может испортить настройки. " +
-                "Окно уже запущенного приложения можно открыть двойным щелчком по значку " +
-                "в области уведомлений.",
-                "OpenTuya Sync", MessageBoxButton.OK, MessageBoxImage.Information);
+            // Вторая копия не нужна, но её запуск -- ожидаемое действие
+            // пользователя: так он возвращает окно, если значок в трее
+            // спрятан. Поэтому просим первую копию показать окно и тихо
+            // завершаемся, без сообщений.
+            try
+            {
+                using var signal = EventWaitHandle.OpenExisting(ShowWindowEventName);
+                signal.Set();
+            }
+            catch (Exception)
+            {
+                // Первая копия не успела создать событие -- просто выходим.
+            }
 
             Shutdown();
             return;
@@ -75,11 +96,33 @@ public partial class App : Application
         // чтение того же файла на старте -- лишняя работа.
         var config = ConfigStore.Load();
 
-        bool startMinimized = e.Args.Contains("--minimized") || config.StartMinimized;
+        // --enable-autostart: включает автозапуск приложения при входе в
+        // систему. Используется сценарием установки, чтобы автозапуск
+        // включался из одного места -- настроек приложения, а не правкой
+        // реестра в командном файле. Иначе настройка в config.json и запись
+        // в реестре разошлись бы: первое же сохранение настроек удалило бы
+        // автозапуск, включённый сценарием.
+        if (e.Args.Contains("--enable-autostart") && !config.AutoStart)
+        {
+            config.AutoStart = true;
+
+            try { ConfigStore.Save(config); } catch (Exception) { }
+        }
+
+        AutoStartManager.SetEnabled(config.AutoStart);
+
+        // --show показывает окно сразу: нужен сценарию установки, чтобы
+        // пользователь увидел программу в первый раз, даже если она настроена
+        // запускаться свёрнутой.
+        bool forceShow = e.Args.Contains("--show");
+
+        bool startMinimized = !forceShow &&
+                              (e.Args.Contains("--minimized") || config.StartMinimized);
 
         _mainWindow = new MainWindow(config);
 
         CreateTrayIcon();
+        StartShowWindowListener();
 
         if (!startMinimized)
             _mainWindow.Show();
@@ -87,6 +130,60 @@ public partial class App : Application
             _mainWindow.Hide();
 
         StartHeartbeat();
+
+        // Приложение -- единственная точка запуска: оно поднимается при входе
+        // в систему свёрнутым в трей и само запускает службу. Служба больше
+        // не стартует вместе с Windows, иначе получался бы второй
+        // независимый запуск, который некому показать в интерфейсе.
+        Task.Run(() => ServiceStarter.EnsureRunning(_mainWindow));
+
+        if (startMinimized)
+            Dispatcher.BeginInvoke(new Action(ShowTrayHint));
+    }
+
+    /// <summary>
+    /// Ждёт сигнала «покажи окно» от повторного запуска.
+    ///
+    /// Отдельный поток, потому что ожидание блокирующее, а поток интерфейса
+    /// должен оставаться свободным.
+    /// </summary>
+    private void StartShowWindowListener()
+    {
+        try
+        {
+            _showWindowSignal = new EventWaitHandle(
+                false, EventResetMode.AutoReset, ShowWindowEventName);
+        }
+        catch (Exception)
+        {
+            // Без сигнала остаётся значок в трее: это не критично.
+            return;
+        }
+
+        _showWindowThread = new Thread(() =>
+        {
+            while (true)
+            {
+                try
+                {
+                    _showWindowSignal.WaitOne();
+
+                    // Окно принадлежит потоку интерфейса: показывать его
+                    // нужно оттуда.
+                    Dispatcher.BeginInvoke(new Action(ShowWindow));
+                }
+                catch (Exception)
+                {
+                    return;
+                }
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "show-window-listener",
+        };
+
+        _showWindowThread.Start();
     }
 
     /// <summary>
@@ -162,6 +259,35 @@ public partial class App : Application
 
         _trayIcon.ContextMenuStrip = menu;
         _trayIcon.DoubleClick += (_, _) => ShowWindow();
+
+        // Подсказка при запуске свёрнутым.
+        //
+        // Windows 11 по умолчанию убирает значки новых программ в скрытую
+        // область панели задач, и приложение выглядит «не запустившимся».
+        // Всплывающее сообщение показывает, что программа работает, и как
+        // вернуть окно. Оно не мешает: показывается один раз при старте.
+        _trayIcon.BalloonTipTitle = "OpenTuya Sync работает";
+        _trayIcon.BalloonTipText =
+            "Программа запущена в области уведомлений. Двойной щелчок по значку " +
+            "откроет окно. Если значка не видно, нажмите стрелку «Показать " +
+            "скрытые значки» на панели задач.";
+        _trayIcon.BalloonTipIcon = System.Windows.Forms.ToolTipIcon.Info;
+    }
+
+    /// <summary>
+    /// Показывает подсказку о работе в области уведомлений.
+    ///
+    /// Вызывается при запуске свёрнутым: без окна пользователь иначе не
+    /// понимает, запустилась программа или нет. Windows 11 к тому же прячет
+    /// значки новых программ в скрытую область.
+    /// </summary>
+    private void ShowTrayHint()
+    {
+        try { _trayIcon?.ShowBalloonTip(10000); }
+        catch (Exception)
+        {
+            // Подсказка не критична.
+        }
     }
 
     private static System.Drawing.Icon LoadTrayIcon()
@@ -200,6 +326,9 @@ public partial class App : Application
     {
         try { File.Delete(HeartbeatPath); } catch (Exception) { }
         _trayIcon?.Dispose();
+
+        try { _showWindowSignal?.Set(); } catch (Exception) { }
+        try { _showWindowSignal?.Dispose(); } catch (Exception) { }
 
         try { _singleInstance?.ReleaseMutex(); } catch (Exception) { }
         try { _singleInstance?.Dispose(); } catch (Exception) { }

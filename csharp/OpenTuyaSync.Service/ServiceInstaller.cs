@@ -60,7 +60,7 @@ public static class ServiceInstaller
             ? $"\"{exePath}\""
             : $"\"{exePath}\" {string.Join(' ', serviceArgs)}";
 
-        int code = RunSc($"create {ServiceName} binPath= \"{binPath}\" start= auto DisplayName= \"{DisplayName}\"");
+        int code = RunSc($"create {ServiceName} binPath= \"{binPath}\" start= demand DisplayName= \"{DisplayName}\"");
         if (code != 0)
         {
             Console.Error.WriteLine("Не удалось создать службу.");
@@ -69,9 +69,20 @@ public static class ServiceInstaller
 
         RunSc($"description {ServiceName} \"{Description}\"", ignoreErrors: true);
 
-        // delayed-auto: служба стартует после входа в систему, не задерживая
-        // загрузку. Для подсветки это правильный компромисс.
-        RunSc($"config {ServiceName} start= delayed-auto", ignoreErrors: true);
+        // Тип запуска -- «вручную».
+        //
+        // Служба намеренно НЕ стартует вместе с Windows: запуск выполняет
+        // приложение, свёрнутое в трей. Иначе получалось бы два независимых
+        // запуска, и служба работала бы без всякого интерфейса -- а
+        // пользователю нужно видеть состояние и управлять подсветкой.
+        // Приложение поднимает службу само при старте.
+        RunSc($"config {ServiceName} start= demand", ignoreErrors: true);
+
+        // Разрешение пользователю запускать службу без запроса прав.
+        //
+        // Без него приложение не сможет поднять службу при входе в систему:
+        // пришлось бы показывать запрос администратора при каждом запуске.
+        GrantStartPermission();
 
         // При падении система перезапускает службу с задержкой.
         RunSc($"failure {ServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/30000", ignoreErrors: true);
@@ -218,6 +229,116 @@ public static class ServiceInstaller
         }
 
         return devices;
+    }
+
+    /// <summary>
+    /// Разрешает интерактивным пользователям запускать службу и узнавать её
+    /// состояние -- без права останавливать и менять настройки.
+    ///
+    /// Зачем. Приложение при входе в систему поднимает службу само, и запрос
+    /// прав администратора при каждом входе был бы невыносим. Права выдаются
+    /// только на запуск и чтение состояния: остановка и удаление по-прежнему
+    /// требуют прав администратора.
+    ///
+    /// Права выдаются правкой дескриптора безопасности службы: берём текущий
+    /// и добавляем разрешение для «интерактивных пользователей».
+    /// </summary>
+    private static void GrantStartPermission()
+    {
+        var (code, current) = RunScCapture($"sdshow {ServiceName}");
+
+        if (code != 0 || string.IsNullOrWhiteSpace(current))
+        {
+            Console.Error.WriteLine(
+                "Не удалось прочитать права службы: запускать её придётся от администратора.");
+            return;
+        }
+
+        current = current.Trim();
+
+        // Разрешение уже есть -- второй раз не добавляем.
+        //
+        // Проверять нужно именно право RP (запуск) в списке интерактивных
+        // пользователей: в дескрипторе уже есть запись для IU, но только на
+        // чтение состояния и остановку. Первая версия проверки смотрела на
+        // наличие записи IU целиком и поэтому разрешение не добавляла.
+        if (InteractiveCanStart(current)) return;
+
+        // D: -- список разрешений. Вставляем своё сразу после него.
+        //   RP -- запуск службы. Остальные права (чтение состояния) у
+        //   интерактивных пользователей уже есть.
+        const string interactiveAce = "(A;;RP;;;IU)";
+
+        int index = current.IndexOf("D:", StringComparison.Ordinal);
+
+        if (index < 0)
+        {
+            Console.Error.WriteLine(
+                "Не удалось разобрать права службы: запускать её придётся от администратора.");
+            return;
+        }
+
+        string updated = current[..(index + 2)] + interactiveAce + current[(index + 2)..];
+
+        var (setCode, setOutput) = RunScCapture($"sdset {ServiceName} \"{updated}\"");
+
+        if (setCode == 0)
+        {
+            Console.WriteLine("Разрешён запуск службы пользователем (без запроса прав).");
+        }
+        else
+        {
+            Console.Error.WriteLine(
+                $"Не удалось выдать разрешение на запуск службы: {setOutput.Trim()}");
+        }
+    }
+
+    /// <summary>
+    /// Есть ли у интерактивных пользователей право запускать службу (RP).
+    ///
+    /// Разбирать дескриптор целиком не нужно: достаточно разделить его по
+    /// открывающим скобкам и посмотреть на записи, выданные IU.
+    /// </summary>
+    private static bool InteractiveCanStart(string descriptor)
+    {
+        foreach (string part in descriptor.Split('('))
+        {
+            if (!part.Contains(";;;IU)", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (part.Contains("RP", StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static (int Code, string Output) RunScCapture(string arguments)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo("sc.exe", arguments)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null) return (1, "");
+
+            string output = process.StandardOutput.ReadToEnd() +
+                            process.StandardError.ReadToEnd();
+
+            process.WaitForExit(15000);
+
+            return (process.ExitCode, output);
+        }
+        catch (Exception ex)
+        {
+            return (1, ex.Message);
+        }
     }
 
     private static bool IsAdministrator()

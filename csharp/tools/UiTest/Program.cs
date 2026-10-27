@@ -28,9 +28,13 @@ using TabItem = System.Windows.Controls.TabItem;
 internal static class Program
 {
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+        // Отдельный сценарий: переключение с ручного управления на
+        // автоматическое. Вызывается как OpenTuyaSync.UiTest.exe --switch
+        if (args.Contains("--switch")) return RunSwitchScenario();
 
         Console.WriteLine("=== Проверка построения интерфейса ===");
 
@@ -232,6 +236,127 @@ internal static class Program
             Console.Error.WriteLine();
             Console.Error.WriteLine(ex.StackTrace);
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Воспроизводит переход «ручное управление → автоматический режим».
+    ///
+    /// Зачем. Пользователь сообщил: при переключении с ручного режима на
+    /// автоматический подсветка не подключается и приложение вылетает.
+    /// Нажимать кнопки вручную для каждой проверки нельзя, а через
+    /// UI Automation окно отвечает нестабильно, поэтому сценарий вызывает
+    /// те же обработчики напрямую -- те, что висят на кнопках.
+    ///
+    /// Любое необработанное исключение печатается целиком: именно оно
+    /// и есть причина «вылета».
+    /// </summary>
+    private static int RunSwitchScenario()
+    {
+        Console.WriteLine("=== Проверка перехода «вручную → автоматически» ===");
+
+        // Исключения из фоновых потоков иначе убили бы процесс без следа.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ:");
+            Console.Error.WriteLine(e.ExceptionObject?.ToString());
+        };
+
+        try
+        {
+            ConfigStore.DataDirectory = Path.Combine(AppContext.BaseDirectory, "ui_switch_data");
+            Directory.CreateDirectory(ConfigStore.DataDirectory);
+
+            // Настройки с Bluetooth-лентой: без устройства автоматический
+            // режим не запустится, и сценарий ничего бы не проверил.
+            var config = new AppConfig();
+            config.Devices.Add(new DeviceConfig
+            {
+                Id = "switch-test",
+                Name = "Лента (проверка)",
+                Type = DeviceKind.ElkBledob,
+                Enabled = true,
+                ElkBledob = new ElkSettings { Mac = "BE:60:41:00:27:B9" },
+            });
+
+            ConfigStore.Save(config);
+
+            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+
+            app.Resources.MergedDictionaries.Add(new ResourceDictionary
+            {
+                Source = new Uri("pack://application:,,,/OpenTuyaSync;component/Styles.xaml"),
+            });
+
+            var window = new MainWindow(ConfigStore.Load());
+            window.Show();
+            window.UpdateLayout();
+
+            Console.WriteLine("  окно создано");
+
+            // 1. Ручное действие: цвет из палитры.
+            var paletteButton = new Button { Tag = new Rgb(1f, 0f, 0f) };
+            InvokePrivate(window, "OnPaletteColorClick", paletteButton, new RoutedEventArgs());
+
+            Console.WriteLine("  ручной цвет отправлен");
+            Pump(3000);
+
+            // 2. Переключение на автоматический режим -- кнопка «Запустить».
+            //    silent: true, иначе проверка остановится на модальном окне.
+            InvokePrivate(window, "StartCapture", true);
+
+            Console.WriteLine("  автоматический режим запущен, жду...");
+            Pump(20000);
+
+            window.Close();
+            app.Shutdown();
+
+            Console.WriteLine();
+            Console.WriteLine("РЕЗУЛЬТАТ: переход выполнен без сбоев");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"ОШИБКА перехода: {ex.GetType().Name}");
+            Console.Error.WriteLine(ex.Message);
+
+            if (ex.InnerException != null)
+            {
+                Console.Error.WriteLine($"  внутренняя: {ex.InnerException.GetType().Name}");
+                Console.Error.WriteLine($"  {ex.InnerException.Message}");
+            }
+
+            Console.Error.WriteLine();
+            Console.Error.WriteLine(ex.StackTrace);
+            return 1;
+        }
+    }
+
+    /// <summary>Вызывает закрытый метод окна -- так же, как это делает кнопка.</summary>
+    private static void InvokePrivate(object target, string method, params object[] arguments)
+    {
+        var info = target.GetType().GetMethod(
+            method,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"Метод {method} не найден");
+
+        info.Invoke(target, arguments);
+    }
+
+    /// <summary>Прокачивает очередь сообщений заданное время.</summary>
+    private static void Pump(int milliseconds)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        while (stopwatch.ElapsedMilliseconds < milliseconds)
+        {
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(() => { }));
+
+            Thread.Sleep(50);
         }
     }
 
